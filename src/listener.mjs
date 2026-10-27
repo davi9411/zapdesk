@@ -2,9 +2,10 @@
 // Só envia o que estiver na fila "outbox", que é preenchida exclusivamente por "wa enviar" (comando explícito do usuário).
 import makeWASocket, * as B from '@whiskeysockets/baileys';
 import pino from 'pino';
-import { writeFileSync, mkdirSync, unlinkSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { PATHS, MAX_MIDIA_MB, garantirPastas } from './config.mjs';
+import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb } from './db.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers } = B;
@@ -15,6 +16,14 @@ const logger = pino({ level: 'warn' }, pino.destination({ dest: PATHS.log, sync:
 const log = (...a) => logger.warn(a.join(' '));
 
 // ---------- liga/desliga ----------
+// Instância única: duas conexões com a mesma sessão se derrubam (erro 440). Se já há um listener vivo, sai.
+try {
+  const outro = Number(readFileSync(PATHS.pid, 'utf8'));
+  if (outro && outro !== process.pid && !pidDeOutroBoot() && /node\.exe/i.test(execFileSync('tasklist', ['/FI', `PID eq ${outro}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' }))) {
+    console.error(`Já existe um listener rodando (PID ${outro}); este foi encerrado.`);
+    process.exit(0);
+  }
+} catch {}
 writeFileSync(PATHS.pid, String(process.pid));
 const sair = (cod = 0) => {
   try { if (readFileSync(PATHS.pid, 'utf8') === String(process.pid)) unlinkSync(PATHS.pid); } catch {}
@@ -199,11 +208,30 @@ async function conectar() {
   });
 
   // Histórico inicial (só texto e metadados; mídia antiga já não está disponível).
-  sock.ev.on('messaging-history.set', async ({ messages = [], contacts = [] }) => {
+  // Histórico pedido de propósito ("pedir-historico.json", sync ON_DEMAND = 6) baixa a mídia também,
+  // porque é de mensagens recentes que o leitor perdeu enquanto estava desligado.
+  sock.ev.on('messaging-history.set', async ({ messages = [], contacts = [], syncType }) => {
     contacts.forEach(guardarContato);
-    for (const m of messages) { try { await salvar(m, { baixar: false }); } catch {} }
+    const baixar = syncType === 6;
+    if (baixar) log(`histórico sob demanda recebido: ${messages.length} mensagem(ns)`);
+    for (const m of messages) { try { await salvar(m, { baixar }); } catch {} }
   });
   sock.ev.on('contacts.upsert', (cs) => cs.forEach(guardarContato));
 }
+
+// ---------- pedido de histórico (recupera o que chegou com o leitor desligado) ----------
+// Gatilho: arquivo "pedir-historico.json" na pasta de dados: {"jid":"55DDDNUMERO@s.whatsapp.net","count":50}.
+// Pede ao celular as últimas N mensagens daquele chat (âncora = agora); a resposta cai em 'messaging-history.set'.
+const ARQ_PEDIDO = join(PATHS.data, 'pedir-historico.json');
+setInterval(async () => {
+  if (!conectado || !existsSync(ARQ_PEDIDO)) return;
+  try {
+    const p = JSON.parse(readFileSync(ARQ_PEDIDO, 'utf8'));
+    unlinkSync(ARQ_PEDIDO);
+    const count = Math.min(Number(p.count) || 50, 50);
+    await sock.fetchMessageHistory(count, { remoteJid: p.jid, id: p.ancoraId || 'ANCORA-AGORA', fromMe: false }, Date.now());
+    log(`histórico pedido ao celular: ${p.jid} (${count})`);
+  } catch (e) { log('falha ao pedir histórico', e.message); try { unlinkSync(ARQ_PEDIDO); } catch {} }
+}, 5000);
 
 conectar().catch((e) => { log('falha fatal', e.stack || e.message); sair(1); });

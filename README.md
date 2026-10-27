@@ -40,6 +40,18 @@ Nada sobe sozinho; reiniciar o PC deixa tudo desligado.
 
 Ligado usa ~100–150 MB de RAM e CPU quase zero. `ligar.cmd` / `desligar.cmd` são atalhos de duplo clique.
 
+### Subir junto com o Windows (opcional)
+```
+.\tools\instalar-servico.ps1              # PowerShell como administrador, uma vez
+.\tools\instalar-servico.ps1 -SoAtualizar # depois de mudar o código (sem admin)
+.\tools\instalar-servico.ps1 -Remover
+```
+Cria a tarefa agendada `wa-leitor`: sobe ~1 min após o boot, **antes do login** (LogonType S4U,
+sem guardar senha), fica até o PC desligar e reinicia sozinha se cair. Como esse tipo de tarefa não
+enxerga o perfil do usuário nem o OneDrive, ela roda uma cópia do programa em `<dados>\app` e usa a
+pasta de dados `C:\wa-leitor` (com permissão só do usuário, SYSTEM e administradores). Se essa
+pasta tiver uma sessão pareada, a CLI passa a usá-la automaticamente.
+
 ## Primeiro uso
 ```
 npm install

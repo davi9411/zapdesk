@@ -4,7 +4,7 @@ import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, openSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { PATHS } from './config.mjs';
+import { PATHS, pidDeOutroBoot } from './config.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const [cmd, ...resto] = process.argv.slice(2);
@@ -31,7 +31,7 @@ function opcoes(args) {
 function pidVivo() {
   if (!existsSync(PATHS.pid)) return null;
   const pid = Number(readFileSync(PATHS.pid, 'utf8'));
-  if (!pid) return null;
+  if (!pid || pidDeOutroBoot()) return null;
   try {
     // confere que o PID é mesmo um node (evita PID reaproveitado após reiniciar o Windows)
     const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
@@ -68,6 +68,15 @@ async function ligar() {
   if (!existsSync(join(PATHS.auth, 'creds.json'))) { console.error('Ainda não pareado. Rode primeiro: wa parear 55DDDNUMERO'); process.exit(1); }
   const pid = pidVivo();
   if (pid) { console.log(`Já está ligado (PID ${pid}).`); return; }
+  // trava de partida: duas chamadas quase simultâneas (ex.: duas sessões do Claude) não sobem dois listeners
+  const trava = join(PATHS.data, 'wa.starting');
+  try { if (Date.now() - statSync(trava).mtimeMs > 40_000) unlinkSync(trava); } catch {}
+  try { writeFileSync(trava, String(process.pid), { flag: 'wx' }); }
+  catch { console.log('Já está subindo (outra chamada acabou de ligar). Aguarde ~20 s e rode: wa status'); return; }
+  try { await subir(o); } finally { try { unlinkSync(trava); } catch {} }
+}
+
+async function subir(o) {
   const env = { ...process.env };
   if (o.horas) env.WA_AUTO_OFF_MIN = String(Math.round(Number(o.horas) * 60));
   const log = openSync(PATHS.log, 'a');
