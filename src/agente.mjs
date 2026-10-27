@@ -191,6 +191,8 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
+    // aviso temporário do agente.json (ex.: "fora do horário hoje"), válido até "contextoAte"
+    contexto: cfg.contexto && (!cfg.contextoAte || Date.now() < Date.parse(cfg.contextoAte)) ? cfg.contexto : null,
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
 }
 
