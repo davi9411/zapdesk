@@ -157,9 +157,10 @@ function verificarAusencia(nova) {
   const a = lerAusencia();
   const meuNumero = (sock?.user?.id || '').split(':')[0].split('@')[0];
   if (!deveResponder(a, { ...nova, meuNumero })) return;
-  // conversa com etiqueta "Pessoal" (ou a definida em "etiquetaPessoal") não recebe o aviso
+  // conversa com a etiqueta pessoal ou alguma de "etiquetasIgnorar" não recebe o aviso
+  const fora = [a.etiquetaPessoal || 'Pessoal', ...(a.etiquetasIgnorar || [])].map(normEtiqueta);
   const pessoal = db.prepare('SELECT e.nome FROM etiqueta_chat ec JOIN etiquetas e ON e.id = ec.etiqueta WHERE ec.chat = ?').all(nova.jid)
-    .some((e) => normEtiqueta(e.nome) === normEtiqueta(a.etiquetaPessoal || 'Pessoal'));
+    .some((e) => fora.includes(normEtiqueta(e.nome)));
   if (pessoal) return;
   const r = registrarAusencia(a, nova.jid, nova.nome);
   log(`ausência: ${nova.jid} -> ${r}`);

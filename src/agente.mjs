@@ -5,6 +5,7 @@
 // Configuração: <dados>/agente.json (relida a cada ciclo)
 // { "ativo": true, "inicio": "...", "fim": "..." (opcional: sem fim = sempre), "nome": "Dante",
 //   "empresa": "DS Trade", "davi": "5511999999999" (WhatsApp pessoal do dono), "daviJids": [], "somente": [], "somenteAte": "..." (fim do teste), "excluir": [],
+//   "etiquetaPessoal": "Pessoal🏠", "etiquetasIgnorar": ["Outro robô"] (conversas que o agente não toca),
 //   "maxPorChatDia": 12, "humanoHoras": 12, "semRespostaMin": 15, "lembrarCasoMin": 60, "alertaHoras": [8, 22],
 //   "evento": { "inicio": "...", "fim": "...", "descricao": "um evento de ...", "retorno": "sexta-feira (30/10)" } }
 // Se a equipe (humano) escreveu na conversa nas últimas "humanoHoras", o agente não responde o cliente
@@ -90,7 +91,8 @@ function eventoAtivo(cfg) {
 }
 // etiquetas do WhatsApp Business (sincronizadas pelo listener)
 const etiquetasDo = (chat) => db.prepare('SELECT e.nome FROM etiqueta_chat ec JOIN etiquetas e ON e.id = ec.etiqueta WHERE ec.chat = ?').all(chat).map((r) => r.nome);
-const ehPessoal = (cfg, chat) => etiquetasDo(chat).some((n) => normEtiqueta(n) === normEtiqueta(cfg.etiquetaPessoal));
+// conversa que o agente não toca: etiqueta pessoal ou alguma de "etiquetasIgnorar" (ex.: outro robô cuida dela)
+const ehPessoal = (cfg, chat) => { const fora = [cfg.etiquetaPessoal, ...(cfg.etiquetasIgnorar || [])].map(normEtiqueta); return etiquetasDo(chat).some((n) => fora.includes(normEtiqueta(n))); };
 const pedirEtiqueta = (chat, nome, remover = false) => db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES (?, ?, ?, strftime('%s','now'))").run(remover ? 'etiqueta-' : 'etiqueta+', chat, nome);
 const cabecalho = (cfg) => `*${cfg.nome} | Agente IA ${cfg.empresa}:*\n`;
 
@@ -404,7 +406,7 @@ async function ciclo() {
       if (cfg.daviJids.includes(c.chat)) continue;
       const numero = c.chat.split('@')[0];
       if (cfg.excluir.includes(numero) || (cfg.somente.length && !cfg.somente.includes(numero))) continue;
-      if (ehPessoal(cfg, c.chat)) continue; // contato pessoal: o agente não entra
+      if (ehPessoal(cfg, c.chat)) continue; // contato pessoal ou de outro robô: o agente não entra
       const e = estadoChat(c.chat);
       if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
       const aus = textoAusencia();
