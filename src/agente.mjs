@@ -375,6 +375,35 @@ function resumoDiario(cfg) {
   avisarDavi(cfg, `🗒️ *Resumo de hoje*\nConversas atendidas: ${atendidos.length}${atendidos.map((a) => `\n• ${a.nome || a.chat}`).join('')}\nCasos: ${casos.length ? casos.map((c) => `\n#${c.id} [${c.status}] ${c.nome || ''}: ${c.resumo}`).join('') : 'nenhum'}`);
 }
 
+// ---------- vigia do leitor ----------
+// A tarefa wa-leitor nem sempre se religa quando o processo morre; o agente (sessão logada) confere a
+// cada minuto e, se o leitor não estiver vivo nem subindo, inicia a tarefa (não precisa de administrador).
+let ultimaVigia = 0;
+let leitorCaidoDesde = 0;
+const ps = (cmd) => execFileSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8', windowsHide: true }).trim();
+function vigiarLeitor(cfg) {
+  if (Date.now() - ultimaVigia < 60_000) return;
+  ultimaVigia = Date.now();
+  let vivo = false;
+  try {
+    const pid = Number(readFileSync(PATHS.pid, 'utf8'));
+    vivo = !!pid && /node\.exe/i.test(execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true }));
+  } catch {}
+  if (vivo) {
+    if (leitorCaidoDesde) {
+      const min = Math.round((Date.now() - leitorCaidoDesde) / 60_000);
+      log(`leitor voltou (${min} min fora)`);
+      if (cfg && min >= 5) avisarDavi(cfg, `⚠️ O leitor do WhatsApp ficou fora do ar por ~${min} min e foi religado sozinho. Respondo o que ficou pendente.`);
+    }
+    leitorCaidoDesde = 0;
+    return;
+  }
+  if (!leitorCaidoDesde) leitorCaidoDesde = Date.now();
+  try {
+    if (ps('(Get-ScheduledTask -TaskName wa-leitor).State') !== 'Running') { ps('Start-ScheduledTask -TaskName wa-leitor'); log('leitor fora do ar: tarefa wa-leitor iniciada'); }
+  } catch (e) { log(`vigia do leitor: ${e.message}`); }
+}
+
 // ---------- ciclo ----------
 let ocupado = false;
 async function ciclo() {
@@ -383,6 +412,7 @@ async function ciclo() {
   try {
     writeFileSync(ARQ_PID, String(process.pid)); // mantém o pid "fresco" (mtime) para o status
     const cfg = lerCfg();
+    vigiarLeitor(cfg);
     if (!cfg || Date.now() < cfg.ini || Date.now() > cfg.fim) return;
     const iniS = Math.floor(cfg.ini / 1000);
 
