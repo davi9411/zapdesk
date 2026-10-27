@@ -6,7 +6,7 @@ import { writeFileSync, mkdirSync, unlinkSync, readFileSync, existsSync } from '
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
-import { abrirDb } from './db.mjs';
+import { abrirDb, normEtiqueta } from './db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './ausencia.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers } = B;
@@ -91,7 +91,50 @@ async function nomeGrupo(jid) {
 function guardarContato(ct) {
   const n = ct.name || ct.notify;
   if (n && ct.id && !ct.id.endsWith('@g.us')) { upChat.run(ct.id, n, 0, 0); setNome.run(n, ct.id); }
+  if (ct.name && ct.id) db.prepare('UPDATE chats SET salvo = 1 WHERE jid = ?').run(ct.id); // "name" só vem da agenda
 }
+
+// ---------- etiquetas (WhatsApp Business) ----------
+// LID → número, para casar com os chats gravados (que usam o número quando o protocolo informa).
+async function paraNumero(jid) {
+  if (!jid?.endsWith('@lid')) return jid;
+  try { const pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(jid); return pn ? B.jidNormalizedUser(pn) : jid; } catch { return jid; }
+}
+function guardarEtiqueta(l) {
+  if (l.deleted) { db.prepare('DELETE FROM etiquetas WHERE id = ?').run(l.id); db.prepare('DELETE FROM etiqueta_chat WHERE etiqueta = ?').run(l.id); return; }
+  db.prepare('INSERT INTO etiquetas (id, nome, cor) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET nome = excluded.nome, cor = excluded.cor').run(l.id, l.name || '', l.color ?? null);
+}
+async function guardarAssociacao({ type, association: a }) {
+  if (!a?.chatId || a.messageId) return; // só etiqueta de conversa
+  const chat = await paraNumero(a.chatId);
+  if (type === 'add') db.prepare('INSERT OR IGNORE INTO etiqueta_chat (chat, etiqueta) VALUES (?, ?)').run(chat, a.labelId);
+  else db.prepare('DELETE FROM etiqueta_chat WHERE chat = ? AND etiqueta = ?').run(chat, a.labelId);
+}
+// Fila "acoes": pôr/tirar etiqueta pelo nome (cria a etiqueta se ela ainda não existir).
+async function processarAcoes() {
+  if (!conectado) return;
+  for (const ac of db.prepare("SELECT * FROM acoes WHERE status = 'pendente' ORDER BY id LIMIT 5").all()) {
+    try {
+      let et = db.prepare('SELECT * FROM etiquetas').all().find((e) => normEtiqueta(e.nome) === normEtiqueta(ac.valor));
+      if (ac.tipo === 'etiqueta+') {
+        if (!et) {
+          const id = String(Math.max(0, ...db.prepare('SELECT id FROM etiquetas').all().map((r) => Number(r.id) || 0)) + 1);
+          await sock.addLabel('', { id, name: ac.valor, color: id % 20, deleted: false });
+          guardarEtiqueta({ id, name: ac.valor, color: id % 20 });
+          et = { id };
+        }
+        await sock.addChatLabel(ac.chat, et.id);
+        db.prepare('INSERT OR IGNORE INTO etiqueta_chat (chat, etiqueta) VALUES (?, ?)').run(ac.chat, et.id);
+      } else if (ac.tipo === 'etiqueta-' && et) {
+        await sock.removeChatLabel(ac.chat, et.id);
+        db.prepare('DELETE FROM etiqueta_chat WHERE chat = ? AND etiqueta = ?').run(ac.chat, et.id);
+      }
+      db.prepare("UPDATE acoes SET status = 'feita' WHERE id = ?").run(ac.id);
+      log(`ação #${ac.id} ${ac.tipo} "${ac.valor}" ${ac.chat}`);
+    } catch (e) { db.prepare("UPDATE acoes SET status = 'falhou', erro = ? WHERE id = ?").run(e.message, ac.id); log(`ação #${ac.id} falhou: ${e.message}`); }
+  }
+}
+setInterval(() => processarAcoes().catch((e) => log('erro nas ações', e.message)), 5000);
 
 async function salvar(msg, { baixar }) {
   const key = msg.key;
@@ -136,6 +179,10 @@ function verificarAusencia(nova) {
   const a = lerAusencia();
   const meuNumero = (sock?.user?.id || '').split(':')[0].split('@')[0];
   if (!deveResponder(a, { ...nova, meuNumero })) return;
+  // conversa com etiqueta "Pessoal" (ou a definida em "etiquetaPessoal") não recebe o aviso
+  const pessoal = db.prepare('SELECT e.nome FROM etiqueta_chat ec JOIN etiquetas e ON e.id = ec.etiqueta WHERE ec.chat = ?').all(nova.jid)
+    .some((e) => normEtiqueta(e.nome) === normEtiqueta(a.etiquetaPessoal || 'Pessoal'));
+  if (pessoal) return;
   const r = registrarAusencia(a, nova.jid, nova.nome);
   log(`ausência: ${nova.jid} -> ${r}`);
 }
@@ -204,7 +251,23 @@ async function conectar() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
-    if (connection === 'open') { tentativas = 0; conectado = true; log('conectado'); }
+    if (connection === 'open') {
+      tentativas = 0; conectado = true; log('conectado');
+      // Primeira vez com etiquetas (ou arquivo "resync-etiquetas"): baixa do zero as coleções onde ficam
+      // etiquetas e contatos da agenda. Sem a versão salva, o WhatsApp manda o retrato completo (snapshot).
+      const ARQ_RESYNC = join(PATHS.data, 'resync-etiquetas');
+      if (!db.prepare('SELECT 1 FROM etiquetas LIMIT 1').get() || existsSync(ARQ_RESYNC)) {
+        setTimeout(async () => {
+          try {
+            try { unlinkSync(ARQ_RESYNC); } catch {}
+            const cols = ['regular', 'critical_unblock_low'];
+            await state.keys.set({ 'app-state-sync-version': Object.fromEntries(cols.map((c) => [c, null])) });
+            await sock.resyncAppState(cols, false);
+            log(`etiquetas sincronizadas: ${db.prepare('SELECT COUNT(*) n FROM etiquetas').get().n}`);
+          } catch (e) { log('falha ao sincronizar etiquetas', e.message); }
+        }, 15_000);
+      }
+    }
     if (connection === 'close') {
       conectado = false;
       const cod = lastDisconnect?.error?.output?.statusCode;
@@ -234,6 +297,9 @@ async function conectar() {
     for (const m of messages) { try { await salvar(m, { baixar }); } catch {} }
   });
   sock.ev.on('contacts.upsert', (cs) => cs.forEach(guardarContato));
+  sock.ev.on('contacts.update', (cs) => cs.forEach((c) => c.name && guardarContato(c)));
+  sock.ev.on('labels.edit', (l) => { try { guardarEtiqueta(l); } catch (e) { log('erro etiqueta', e.message); } });
+  sock.ev.on('labels.association', (a) => guardarAssociacao(a).catch((e) => log('erro etiqueta/chat', e.message)));
 }
 
 // ---------- pedido de histórico (recupera o que chegou com o leitor desligado) ----------

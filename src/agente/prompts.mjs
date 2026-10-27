@@ -109,7 +109,7 @@ Responda SOMENTE com um objeto JSON, sem texto antes ou depois:
 }
 
 // Davi (dono) escreveu em texto livre no WhatsApp pessoal: descobrir se é um envio a cliente ou orientação de caso.
-export function promptComandoDavi({ nome, empresa, texto, lista, casos }) {
+export function promptComandoDavi({ nome, empresa, texto, lista, casos, etiquetas }) {
   return `Você é ${nome}, agente de atendimento da ${empresa}. O dono da empresa, pelo WhatsApp pessoal, te mandou:
 """${texto}"""
 
@@ -119,16 +119,21 @@ ${lista || '(nenhuma)'}
 CASOS ABERTOS:
 ${casos || '(nenhum)'}
 
+ETIQUETAS EXISTENTES NO WHATSAPP: ${etiquetas || '(nenhuma sincronizada ainda)'}
+
 Decida o que ele quer:
 - "enviar": mandar uma mensagem a um cliente. Use só se o cliente for identificado SEM dúvida na lista
   (nome ou número). chat_idx = índice. mensagem = o que ele quer que o cliente receba, como mensagem pronta
   em português do Brasil, cordial e curta, FIEL ao que ele disse: não acrescente preço, prazo, promessa ou
   informação que ele não tenha dito, e não tire nada do que ele disse. Não comece com o seu nome.
 - "caso": é uma orientação para um dos casos abertos (id do caso e a instrucao).
+- "etiqueta": pôr ou tirar uma etiqueta de um cliente da lista (ex.: "marca a Lu como pessoal", "tira o
+  Rafael de novo cliente"). chat_idx = índice; etiqueta = nome da etiqueta (use o nome exato de uma etiqueta
+  existente quando houver uma equivalente; senão, um nome curto com inicial maiúscula); remover = true para tirar.
 - "duvida": não dá para saber com certeza o cliente ou a intenção. resposta = pergunta curta para ele
   (ex.: "Qual Rafael? Tenho o Rafael +55 11... e o Rafael +55 21...").
 
-Responda SOMENTE com JSON: {"acao":"enviar|caso|duvida","chat_idx":0,"mensagem":"","id":0,"instrucao":"","resposta":""}`;
+Responda SOMENTE com JSON: {"acao":"enviar|caso|etiqueta|duvida","chat_idx":0,"mensagem":"","id":0,"instrucao":"","etiqueta":"","remover":false,"resposta":""}`;
 }
 
 export function promptRespostaDavi({ nome, empresa, caso, conversa, instrucao }) {

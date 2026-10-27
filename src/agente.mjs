@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { uptime } from 'node:os';
 import { PATHS } from './config.mjs';
-import { abrirDb } from './db.mjs';
+import { abrirDb, normEtiqueta } from './db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/prompts.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -57,7 +57,7 @@ db.exec(`
     pergunta TEXT, status TEXT DEFAULT 'aberto', criado INTEGER, fechado INTEGER, resposta TEXT);
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -74,7 +74,8 @@ function lerCfg() {
     // fim do período de teste: libera todos os clientes, mas só para mensagens novas (desde o fim do teste)
     let desdeLiberado = ini;
     if (c.somenteAte && Date.now() > Date.parse(c.somenteAte)) { c.somente = []; desdeLiberado = Math.max(ini, Date.parse(c.somenteAte)); }
-    return { nome: 'Dante', empresa: 'DS Trade', maxPorChatDia: 12, humanoHoras: 12, semRespostaMin: 15, lembrarCasoMin: 60, alertaHoras: [8, 22], ...c, ini, fim, desdeLiberado, davi: String(c.davi).replace(/\D/g, ''),
+    return { nome: 'Dante', empresa: 'DS Trade', maxPorChatDia: 12, humanoHoras: 12, semRespostaMin: 15, lembrarCasoMin: 60, alertaHoras: [8, 22],
+      etiquetaPessoal: 'Pessoal🏠', etiquetaLead: 'Novo cliente🆕', ...c, ini, fim, desdeLiberado, davi: String(c.davi).replace(/\D/g, ''),
       daviJids: [`${String(c.davi).replace(/\D/g, '')}@s.whatsapp.net`, ...(c.daviJids || [])], somente: dig(c.somente), excluir: dig(c.excluir) };
   } catch { return null; }
 }
@@ -85,6 +86,10 @@ function eventoAtivo(cfg) {
   const i = Date.parse(e.inicio), f = Date.parse(e.fim);
   return Date.now() >= i && Date.now() <= f ? { descricao: e.descricao || 'um evento', retorno: e.retorno || 'próximo dia útil' } : null;
 }
+// etiquetas do WhatsApp Business (sincronizadas pelo listener)
+const etiquetasDo = (chat) => db.prepare('SELECT e.nome FROM etiqueta_chat ec JOIN etiquetas e ON e.id = ec.etiqueta WHERE ec.chat = ?').all(chat).map((r) => r.nome);
+const ehPessoal = (cfg, chat) => etiquetasDo(chat).some((n) => normEtiqueta(n) === normEtiqueta(cfg.etiquetaPessoal));
+const pedirEtiqueta = (chat, nome, remover = false) => db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES (?, ?, ?, strftime('%s','now'))").run(remover ? 'etiqueta-' : 'etiqueta+', chat, nome);
 const cabecalho = (cfg) => `*${cfg.nome} | Agente IA ${cfg.empresa}:*\n`;
 
 function enfileirar(chat, nome, texto) {
@@ -250,6 +255,12 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou verificando essas informações aqui no sistema e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
   enfileirar(chat, nome, cabecalho(cfg) + texto);
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
+  if (!e.etiquetado && cfg.etiquetaLead) {
+    db.prepare('UPDATE agente_chat SET etiquetado = 1 WHERE chat = ?').run(chat);
+    const salvo = db.prepare('SELECT salvo FROM chats WHERE jid = ?').get(chat)?.salvo;
+    const primeira = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ?').get(chat).t || agora();
+    if (!salvo && !etiquetasDo(chat).length && primeira > agora() - 3 * 86400) { pedirEtiqueta(chat, cfg.etiquetaLead); log(`lead: etiqueta "${cfg.etiquetaLead}" em ${chat}`); }
+  }
 
   if (acao === 'consultar' || acao === 'encaminhar') {
     // já existe caso aberto desse cliente? atualiza o mesmo número em vez de abrir outro
@@ -282,13 +293,21 @@ async function interpretarDavi(cfg, texto) {
   const lista = recentes.map((r, i) => {
     const ult = db.prepare('SELECT meu, texto FROM msgs WHERE chat = ? AND texto IS NOT NULL ORDER BY ts DESC LIMIT 3').all(r.chat).reverse()
       .map((m) => `${m.meu ? 'nós' : 'cliente'}: ${(m.texto || '').replace(/\s+/g, ' ').slice(0, 120)}`).join(' | ');
-    return `[${i}] ${r.nome_cliente || r.nome || '(sem nome)'} ${numeroDe(r.chat)} — ${ult}`;
+    const et = etiquetasDo(r.chat);
+    return `[${i}] ${r.nome_cliente || r.nome || '(sem nome)'} ${numeroDe(r.chat)}${et.length ? ` [etiquetas: ${et.join(', ')}]` : ''} — ${ult}`;
   }).join('\n');
   const casos = db.prepare("SELECT id, nome, resumo FROM agente_caso WHERE status = 'aberto' ORDER BY id").all().map((k) => `#${k.id} ${k.nome || ''}: ${k.resumo}`).join('\n');
   let r;
-  try { r = await chamarClaude(promptComandoDavi({ nome: cfg.nome, empresa: cfg.empresa, texto, lista, casos })); }
+  const etiquetas = db.prepare('SELECT nome FROM etiquetas ORDER BY nome').all().map((e) => e.nome).join(', ');
+  try { r = await chamarClaude(promptComandoDavi({ nome: cfg.nome, empresa: cfg.empresa, texto, lista, casos, etiquetas })); }
   catch (err) { avisarDavi(cfg, `Não consegui entender agora (${err.message.slice(0, 100)}). Mande de novo, ou use *#N orientação*.`); return; }
   if (r.acao === 'caso' && r.id) return tratarDavi(cfg, { texto: `#${r.id} ${r.instrucao || ''}` });
+  if (r.acao === 'etiqueta' && recentes[r.chat_idx] && r.etiqueta) {
+    const alvo = recentes[r.chat_idx];
+    pedirEtiqueta(alvo.chat, String(r.etiqueta).trim(), !!r.remover);
+    avisarDavi(cfg, `🏷️ ${r.remover ? 'Tirei' : 'Coloquei'} a etiqueta *${r.etiqueta}* ${r.remover ? 'de' : 'em'} ${alvo.nome_cliente || alvo.nome || numeroDe(alvo.chat)}.`);
+    return;
+  }
   if (r.acao === 'enviar' && recentes[r.chat_idx] && r.mensagem) {
     const alvo = recentes[r.chat_idx];
     const nome = alvo.nome_cliente || alvo.nome || numeroDe(alvo.chat);
@@ -390,6 +409,7 @@ async function ciclo() {
       if (cfg.daviJids.includes(c.chat)) continue;
       const numero = c.chat.split('@')[0];
       if (cfg.excluir.includes(numero) || (cfg.somente.length && !cfg.somente.includes(numero))) continue;
+      if (ehPessoal(cfg, c.chat)) continue; // contato pessoal: o agente não entra
       const e = estadoChat(c.chat);
       if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
       const aus = textoAusencia();

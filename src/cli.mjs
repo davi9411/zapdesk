@@ -239,12 +239,33 @@ async function ausencia() {
   for (const r of env) console.log(`  ${fmt(r.ts)}  ${r.nome || r.chat}`);
 }
 
+// wa etiquetas                 lista as etiquetas e quem está em cada uma
+// wa etiqueta <nome> <etiqueta> [--tirar]   põe (ou tira) a etiqueta; o listener aplica no WhatsApp
+async function etiquetas() {
+  const db = await abrir();
+  const ets = db.prepare('SELECT e.id, e.nome, COUNT(ec.chat) n FROM etiquetas e LEFT JOIN etiqueta_chat ec ON ec.etiqueta = e.id GROUP BY e.id ORDER BY e.nome').all();
+  if (!ets.length) { console.log('Nenhuma etiqueta sincronizada ainda (elas chegam pelo listener).'); return; }
+  for (const e of ets) {
+    console.log(`${e.nome} (${e.n})`);
+    for (const c of db.prepare('SELECT ec.chat, c.nome FROM etiqueta_chat ec LEFT JOIN chats c ON c.jid = ec.chat WHERE ec.etiqueta = ?').all(e.id)) console.log(`   ${c.nome || c.chat}`);
+  }
+}
+async function etiqueta() {
+  const o = opcoes(resto);
+  const [filtro, ...nome] = o._;
+  if (!filtro || !nome.length) { console.error('Uso: wa etiqueta <nome do chat> <etiqueta> [--tirar]'); process.exit(1); }
+  const db = await abrir();
+  const c = acharChat(db, filtro);
+  db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES (?, ?, ?, strftime('%s','now'))").run(o.tirar ? 'etiqueta-' : 'etiqueta+', c.jid, nome.join(' '));
+  console.log(`${o.tirar ? 'Tirar' : 'Pôr'} etiqueta "${nome.join(' ')}" em ${c.nome || c.jid}: na fila (o listener aplica em até 5 s).`);
+}
+
 function parear() {
   const r = spawnSync(process.execPath, ['--no-warnings', join(AQUI, 'parear.mjs'), resto[0] || ''], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
-const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia };
+const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 
@@ -258,7 +279,9 @@ if (!CMDS[cmd]) {
   wa enviar <nome> --texto "..." [--arquivo f]... [--em "16:30"]   envia (ou programa), sempre por comando explícito
   wa fila                    envios pendentes/recentes
   wa cancelar <id>           cancela envio programado
-  wa ausencia                mensagem de ausência: período, texto e quem já recebeu`);
+  wa ausencia                mensagem de ausência: período, texto e quem já recebeu
+  wa etiquetas               etiquetas do WhatsApp Business e quem está em cada uma
+  wa etiqueta <nome> <etiqueta> [--tirar]   põe ou tira uma etiqueta`);
   process.exit(cmd ? 1 : 0);
 }
 await CMDS[cmd]();

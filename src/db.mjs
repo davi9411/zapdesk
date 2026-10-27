@@ -1,6 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { PATHS, garantirPastas } from './config.mjs';
 
+// nome de etiqueta sem emoji/número/acento, para comparar ("Pessoal🏠" == "pessoal")
+export const normEtiqueta = (s) => String(s || '').normalize('NFD').replace(/[^a-zA-Z ]+/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
 export function abrirDb() {
   garantirPastas();
   const db = new DatabaseSync(PATHS.db);
@@ -51,6 +54,21 @@ export function abrirDb() {
       erro TEXT
     );
     CREATE INDEX IF NOT EXISTS ix_outbox_status ON outbox (status, enviar_em);
+    -- Etiquetas do WhatsApp Business (sincronizadas pelo listener) e quem está em cada uma.
+    CREATE TABLE IF NOT EXISTS etiquetas (id TEXT PRIMARY KEY, nome TEXT, cor INTEGER);
+    CREATE TABLE IF NOT EXISTS etiqueta_chat (chat TEXT NOT NULL, etiqueta TEXT NOT NULL, PRIMARY KEY (chat, etiqueta));
+    -- Ações no WhatsApp que não são mensagem (por enquanto: pôr/tirar etiqueta). Executadas pelo listener.
+    CREATE TABLE IF NOT EXISTS acoes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT NOT NULL,   -- etiqueta+ | etiqueta-
+      chat TEXT NOT NULL,
+      valor TEXT,           -- nome da etiqueta
+      criado INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente',  -- pendente | feita | falhou
+      erro TEXT
+    );
   `);
+  // contato salvo na agenda do celular (nome vindo da agenda, não só o nome do perfil)
+  try { db.exec('ALTER TABLE chats ADD COLUMN salvo INTEGER DEFAULT 0'); } catch {}
   return db;
 }
