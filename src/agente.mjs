@@ -95,6 +95,10 @@ const etiquetasDo = (chat) => db.prepare('SELECT e.nome FROM etiqueta_chat ec JO
 const ehPessoal = (cfg, chat) => { const fora = [cfg.etiquetaPessoal, ...(cfg.etiquetasIgnorar || [])].map(normEtiqueta); return etiquetasDo(chat).some((n) => fora.includes(normEtiqueta(n))); };
 const pedirEtiqueta = (chat, nome, remover = false) => db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES (?, ?, ?, strftime('%s','now'))").run(remover ? 'etiqueta-' : 'etiqueta+', chat, nome);
 const cabecalho = (cfg) => `*${cfg.nome} | Agente IA ${cfg.empresa}:*\n`;
+// aviso no fim de toda mensagem ao cliente (configurável em "rodape"; "" desliga)
+const RODAPE = '_Este é um agente de IA em fase de desenvolvimento e pode cometer erros._';
+const rodape = (cfg) => { const r = cfg.rodape ?? RODAPE; return r ? `\n\n${r}` : ''; };
+const paraCliente = (cfg, texto) => cabecalho(cfg) + texto + rodape(cfg);
 
 function enfileirar(chat, nome, texto) {
   db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, ?, NULL, ?, ?)').run(chat, nome, texto, agora(), agora());
@@ -117,7 +121,7 @@ function textoConversa(cfg, chat, limite = 25) {
     const quando = new Date(m.ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     let quem = 'CLIENTE';
     let t = m.texto || '';
-    if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); } else if (aus && t === aus) quem = 'AVISO'; else quem = 'EQUIPE'; }
+    if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); const rod = rodape(cfg); if (rod && t.endsWith(rod)) t = t.slice(0, -rod.length); } else if (aus && t === aus) quem = 'AVISO'; else quem = 'EQUIPE'; }
     if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${m.transcricao}"` : '(sem transcrição)'}`;
     else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}] ${m.transcricao ? `fala: "${m.transcricao}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
@@ -250,7 +254,7 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   let texto = String(r.mensagem_cliente).trim().slice(0, 1500);
   let acao = r.acao;
   if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou verificando essas informações aqui no sistema e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
-  enfileirar(chat, nome, cabecalho(cfg) + texto);
+  enfileirar(chat, nome, paraCliente(cfg, texto));
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
   if (!e.etiquetado && cfg.etiquetaLead) {
     db.prepare('UPDATE agente_chat SET etiquetado = 1 WHERE chat = ?').run(chat);
@@ -332,7 +336,7 @@ async function tratarDavi(cfg, m) {
   const pend = (() => { try { const p = JSON.parse(kv.get('pendente') || 'null'); return p && agora() - p.criado < 1800 ? p : null; } catch { return null; } })();
   if (pend && /^(SIM|S|OK|PODE|CONFIRMO|CONFIRMA|MANDA)[.!]?$/.test(T)) {
     kv.set('pendente', 'null');
-    enfileirar(pend.chat, pend.nome, cabecalho(cfg) + pend.texto);
+    enfileirar(pend.chat, pend.nome, paraCliente(cfg, pend.texto));
     avisarDavi(cfg, `✅ Enviado para ${pend.nome}.`);
     log(`envio livre confirmado ${pend.chat}`);
     return;
@@ -358,7 +362,7 @@ async function tratarDavi(cfg, m) {
     catch (err) { avisarDavi(cfg, `Falha ao redigir a resposta do caso #${caso.id} (${err.message.slice(0, 100)}). Mande de novo em instantes.`); return; }
     if (!texto || /(claude|anthropic|openai|chatgpt|\bdavi\b)/i.test(texto)) { avisarDavi(cfg, `Não consegui redigir uma resposta segura para o caso #${caso.id}. Mande a orientação de outro jeito ou *#${caso.id} sexta*.`); return; }
   }
-  enfileirar(caso.chat, caso.nome, cabecalho(cfg) + texto.slice(0, 1500));
+  enfileirar(caso.chat, caso.nome, paraCliente(cfg, texto.slice(0, 1500)));
   db.prepare("UPDATE agente_caso SET status = ?, fechado = ?, resposta = ? WHERE id = ?").run(depois ? 'depois' : 'respondido', agora(), texto, caso.id);
   avisarDavi(cfg, `✅ Caso #${caso.id} respondido ao cliente:\n"${texto.slice(0, 400)}"`);
   log(`caso #${caso.id} respondido`);
