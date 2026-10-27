@@ -7,7 +7,9 @@
 //   "empresa": "DS Trade", "davi": "5511999999999" (WhatsApp pessoal do dono), "daviJids": [], "somente": [], "somenteAte": "..." (fim do teste), "excluir": [],
 //   "etiquetaPessoal": "Pessoal🏠", "etiquetasIgnorar": ["Outro robô"] (conversas que o agente não toca),
 //   "maxPorChatDia": 12, "humanoHoras": 12, "semRespostaMin": 15, "lembrarCasoMin": 60, "alertaHoras": [8, 22],
-//   "evento": { "inicio": "...", "fim": "...", "descricao": "um evento de ...", "retorno": "sexta-feira (30/10)" } }
+//   "evento": { "inicio": "...", "fim": "...", "descricao": "um evento de ...", "retorno": "sexta-feira (30/10)" },
+//   "horario": { "dias": [1,2,3,4,5], "inicio": "09:00", "fim": "18:00", "feriados": [], "descricao": "seg a sex, 9h às 18h" },
+//   "contexto": "aviso do momento", "contextoAte": "...", "rodape": "_..._", "pingUrl": "https://hc-ping.com/<uuid>" }
 // Se a equipe (humano) escreveu na conversa nas últimas "humanoHoras", o agente não responde o cliente
 // sozinho: se o cliente ficar "semRespostaMin" sem resposta, avisa o Davi com uma sugestão (#N ok envia).
 // Casos parados há "lembrarCasoMin" ganham um lembrete. Avisos só dentro de "alertaHoras".
@@ -26,6 +28,7 @@ import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/p
 import { criarTrava } from './agente/travas.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
+import { aberto, textoRetorno } from './regras/horario.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -193,8 +196,7 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
-    // aviso temporário do agente.json (ex.: "fora do horário hoje"), válido até "contextoAte"
-    contexto: cfg.contexto && (!cfg.contextoAte || Date.now() < Date.parse(cfg.contextoAte)) ? cfg.contexto : null,
+    contexto: contextoAgora(cfg),
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
 }
 
@@ -360,7 +362,10 @@ async function tratarDavi(cfg, m) {
   if (/^(ok|sim|pode|manda)[.!]?$/i.test(instrucao)) {
     if (!caso.sugestao) { avisarDavi(cfg, `O caso #${caso.id} não tem sugestão pronta. Mande *#${caso.id} sua orientação*.`); return; }
     texto = caso.sugestao;
-  } else if (depois) texto = ev ? `Por agora não consigo seguir com o atendimento, mas já coletei todas as informações e enviei para a equipe, que retorna com você na ${ev.retorno}. Obrigado pela paciência! 🙏` : 'Por agora não consigo seguir com o atendimento, mas já coletei todas as informações e enviei para a equipe, que em breve vai te responder por aqui. Obrigado pela paciência! 🙏';
+  } else if (depois) {
+    const quando = ev ? `retorna com você na ${ev.retorno}` : cfg.horario && !aberto(cfg.horario) ? `retorna com você ${textoRetorno(cfg.horario)}` : 'em breve vai te responder por aqui';
+    texto = `Por agora não consigo seguir com o atendimento, mas já coletei todas as informações e enviei para a equipe, que ${quando}. Obrigado pela paciência! 🙏`;
+  }
   else {
     try { texto = String((await chamarClaude(promptRespostaDavi({ nome: cfg.nome, empresa: cfg.empresa, caso, conversa: textoConversa(cfg, caso.chat, 12), instrucao }))).mensagem_cliente || '').trim(); }
     catch (err) { avisarDavi(cfg, `Falha ao redigir a resposta do caso #${caso.id} (${err.message.slice(0, 100)}). Mande de novo em instantes.`); return; }
@@ -413,6 +418,29 @@ function vigiarLeitor(cfg) {
   } catch (e) { log(`vigia do leitor: ${e.message}`); }
 }
 
+// ---------- aviso do momento para o prompt ----------
+// 1) "contexto" manual do agente.json (até "contextoAte"); 2) fora do "horario" de atendimento (sem evento).
+function contextoAgora(cfg) {
+  if (cfg.contexto && (!cfg.contextoAte || Date.now() < Date.parse(cfg.contextoAte))) return cfg.contexto;
+  if (cfg.horario && !eventoAtivo(cfg) && !aberto(cfg.horario)) {
+    return `Agora é fora do horário de atendimento da equipe (${cfg.horario.descricao || 'dias úteis em horário comercial'}). `
+      + `A equipe volta ${textoRetorno(cfg.horario)}. Você continua ajudando no que puder e deixa o resto registrado para a equipe.`;
+  }
+  return null;
+}
+
+// ---------- sinal de vida (Healthchecks.io ou similar) ----------
+// A cada 5 min pinga "pingUrl" (agente vivo e, no Windows, leitor vivo) ou "<pingUrl>/fail" (leitor fora).
+// Se os pings param (PC desligado, sem internet), o serviço manda e-mail.
+let ultimoPing = 0;
+function pingar(cfg) {
+  if (!cfg?.pingUrl || Date.now() - ultimoPing < 300_000) return;
+  ultimoPing = Date.now();
+  let leitorOk = true;
+  if (WIN) { try { leitorOk = processoVivo(Number(readFileSync(PATHS.pid, 'utf8'))); } catch { leitorOk = false; } }
+  fetch(leitorOk ? cfg.pingUrl : `${cfg.pingUrl.replace(/\/$/, '')}/fail`, { signal: AbortSignal.timeout(15_000) }).catch((e) => log(`ping falhou: ${e.message}`));
+}
+
 // ---------- ciclo ----------
 let ocupado = false;
 async function ciclo() {
@@ -422,6 +450,7 @@ async function ciclo() {
     writeFileSync(ARQ_PID, String(process.pid)); // mantém o pid "fresco" (mtime) para o status
     const cfg = lerCfg();
     vigiarLeitor(cfg);
+    pingar(cfg);
     if (!cfg || Date.now() < cfg.ini || Date.now() > cfg.fim) return;
     const iniS = Math.floor(cfg.ini / 1000);
 
