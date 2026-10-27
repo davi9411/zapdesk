@@ -367,8 +367,12 @@ async function tratarDavi(cfg, m) {
     texto = `Por agora não consigo seguir com o atendimento, mas já coletei todas as informações e enviei para a equipe, que ${quando}. Obrigado pela paciência! 🙏`;
   }
   else {
-    try { texto = String((await chamarClaude(promptRespostaDavi({ nome: cfg.nome, empresa: cfg.empresa, caso, conversa: textoConversa(cfg, caso.chat, 12), instrucao }))).mensagem_cliente || '').trim(); }
+    let r;
+    try { r = await chamarClaude(promptRespostaDavi({ nome: cfg.nome, empresa: cfg.empresa, caso, conversa: textoConversa(cfg, caso.chat, 12), instrucao })); }
     catch (err) { avisarDavi(cfg, `Falha ao redigir a resposta do caso #${caso.id} (${err.message.slice(0, 100)}). Mande de novo em instantes.`); return; }
+    // era uma pergunta para o agente sobre o caso: responde só ao dono e o caso continua aberto
+    if (r.para === 'equipe') { avisarDavi(cfg, `💬 *#${caso.id}* ${String(r.resposta_davi || 'Não sei responder com base na conversa.').trim()}`); return; }
+    texto = String(r.mensagem_cliente || '').trim();
     if (!texto || /(claude|anthropic|openai|chatgpt|\bdavi\b)/i.test(texto)) { avisarDavi(cfg, `Não consegui redigir uma resposta segura para o caso #${caso.id}. Mande a orientação de outro jeito ou *#${caso.id} sexta*.`); return; }
   }
   enfileirar(caso.chat, caso.nome, paraCliente(cfg, texto.slice(0, 1500)));

@@ -158,5 +158,9 @@ ORIENTAÇÃO DA EQUIPE: ${instrucao}
 CONVERSA RECENTE:
 ${conversa}
 
-Responda SOMENTE com JSON: {"mensagem_cliente":"texto"}`;
+ANTES DE ESCREVER: a mensagem da equipe pode ser uma PERGUNTA PARA VOCÊ sobre o caso (ex.: "ele mandou o
+print?", "o que o cliente falou?", "qual a versão dele?"), e não uma orientação para o cliente. Nesse caso
+NÃO escreva ao cliente: responda à equipe em resposta_davi, curto e objetivo, com base na conversa.
+
+Responda SOMENTE com JSON: {"para":"cliente|equipe","mensagem_cliente":"texto (se para cliente)","resposta_davi":"texto (se para equipe)"}`;
 }
