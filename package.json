@@ -10,7 +10,8 @@
     "url": "git+https://github.com/davi9411/wa-leitor.git"
   },
   "scripts": {
-    "wa": "node src/cli.mjs"
+    "wa": "node src/cli.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=22.5"

@@ -225,12 +225,26 @@ async function cancelar() {
   console.log(r.changes ? `Cancelado #${id}.` : `#${id} não está pendente (já enviado, em envio ou inexistente).`);
 }
 
+async function ausencia() {
+  const { lerAusencia, ARQ_AUSENCIA } = await import('./ausencia.mjs');
+  const a = lerAusencia();
+  if (!a) { console.log(`Ausência desligada (sem configuração válida em ${ARQ_AUSENCIA}).`); return; }
+  const agora = Date.now();
+  const estado = agora < a.ini ? 'AGENDADA' : agora > a.fim ? 'ENCERRADA' : 'ATIVA AGORA';
+  console.log(`${estado}: ${new Date(a.ini).toLocaleString('pt-BR')} até ${new Date(a.fim).toLocaleString('pt-BR')}`);
+  console.log(`Texto: ${a.texto}`);
+  const db = await abrir();
+  const env = db.prepare('SELECT e.chat, e.ts, c.nome FROM ausencia_enviada e LEFT JOIN chats c ON c.jid = e.chat WHERE e.periodo = ? ORDER BY e.ts').all(a.periodo);
+  console.log(`Avisos enviados neste período: ${env.length}`);
+  for (const r of env) console.log(`  ${fmt(r.ts)}  ${r.nome || r.chat}`);
+}
+
 function parear() {
   const r = spawnSync(process.execPath, ['--no-warnings', join(AQUI, 'parear.mjs'), resto[0] || ''], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
-const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar };
+const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 
@@ -243,7 +257,8 @@ if (!CMDS[cmd]) {
   wa preparar <nome>         transcreve áudios/vídeos e extrai frames (sob demanda)
   wa enviar <nome> --texto "..." [--arquivo f]... [--em "16:30"]   envia (ou programa), sempre por comando explícito
   wa fila                    envios pendentes/recentes
-  wa cancelar <id>           cancela envio programado`);
+  wa cancelar <id>           cancela envio programado
+  wa ausencia                mensagem de ausência: período, texto e quem já recebeu`);
   process.exit(cmd ? 1 : 0);
 }
 await CMDS[cmd]();

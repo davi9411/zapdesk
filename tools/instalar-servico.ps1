@@ -8,11 +8,11 @@
 #
 # Uso (PowerShell como administrador):  .\tools\instalar-servico.ps1           instala/atualiza
 #                                       .\tools\instalar-servico.ps1 -Remover  remove a tarefa
-param([switch]$Remover, [switch]$SoAtualizar, [string]$Usuario = "$env:USERDOMAIN\$env:USERNAME",
+param([switch]$Remover, [switch]$SoAtualizar, [switch]$SoAgente, [string]$Usuario = "$env:USERDOMAIN\$env:USERNAME",
       [string]$Dados = "$env:LOCALAPPDATA\wa-leitor")
 
 $Nome = 'wa-leitor'
-if ($Remover) { Unregister-ScheduledTask -TaskName $Nome -Confirm:$false -ErrorAction SilentlyContinue; "Tarefa '$Nome' removida."; return }
+if ($Remover) { foreach ($t in $Nome, 'wa-agente') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }; "Tarefas removidas."; return }
 
 $raiz = Split-Path -Parent $PSScriptRoot
 $app = Join-Path $Dados 'app'
@@ -44,6 +44,29 @@ $principal = New-ScheduledTaskPrincipal -UserId $Usuario -LogonType S4U -RunLeve
 $config = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
 
-Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilho -Principal $principal -Settings $config `
-  -Description 'Leitor de WhatsApp (wa-leitor): sobe com o Windows e fica até desligar.' -Force | Out-Null
-"Tarefa '$Nome' registrada para $Usuario (dados em $Dados)."
+if (-not $SoAgente) {
+  Register-ScheduledTask -TaskName $Nome -Action $acao -Trigger $gatilho -Principal $principal -Settings $config `
+    -Description 'Leitor de WhatsApp (wa-leitor): sobe com o Windows e fica até desligar.' -Force | Out-Null
+  "Tarefa '$Nome' registrada para $Usuario (dados em $Dados)."
+}
+
+# ---------- agente de atendimento (wa-agente) ----------
+# Precisa do login do Claude Code, que fica no perfil do usuário: roda na SESSÃO LOGADA (Interactive).
+# Sobe no logon e é conferido a cada 5 min (se já estiver rodando, o próprio agente sai na hora).
+# Janela escondida via wscript; a configuração fica em <Dados>\agente.json (sem ela o agente fica parado).
+$vbs = Join-Path $Dados 'agente.vbs'
+$agente = Join-Path $app 'src\agente.mjs'
+@"
+Set sh = CreateObject("WScript.Shell")
+sh.Environment("PROCESS")("WA_DATA") = "$Dados"
+sh.Run """$node"" --no-warnings ""$agente""", 0, False
+"@ | Set-Content -Path $vbs -Encoding ASCII
+$acaoAg = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
+$gLogon = New-ScheduledTaskTrigger -AtLogOn -User $Usuario
+$gVigia = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$princAg = New-ScheduledTaskPrincipal -UserId $Usuario -LogonType Interactive -RunLevel Limited
+$cfgAg = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'wa-agente' -Action $acaoAg -Trigger @($gLogon, $gVigia) -Principal $princAg -Settings $cfgAg `
+  -Description 'Agente de atendimento do wa-leitor: roda na sessão logada, conferido a cada 5 min.' -Force | Out-Null
+"Tarefa 'wa-agente' registrada (logon + vigia a cada 5 min)."

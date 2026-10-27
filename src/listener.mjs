@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb } from './db.mjs';
+import { lerAusencia, deveResponder, criarRegistro } from './ausencia.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers } = B;
 
@@ -126,6 +127,17 @@ async function salvar(msg, { baixar }) {
   }
   const de = key.fromMe ? 'eu' : (msg.pushName || key.participantAlt || key.participant || jid);
   insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null);
+  return { jid, grupo, ts, meu: !!key.fromMe, nome: nome || msg.pushName || null };
+}
+
+// ---------- mensagem de ausência (só mensagens ao vivo, 1 aviso por chat por período) ----------
+const registrarAusencia = criarRegistro(db);
+function verificarAusencia(nova) {
+  const a = lerAusencia();
+  const meuNumero = (sock?.user?.id || '').split(':')[0].split('@')[0];
+  if (!deveResponder(a, { ...nova, meuNumero })) return;
+  const r = registrarAusencia(a, nova.jid, nova.nome);
+  log(`ausência: ${nova.jid} -> ${r}`);
 }
 
 // ---------- envio (fila "outbox", preenchida só por "wa enviar", comando explícito do usuário) ----------
@@ -203,8 +215,13 @@ async function conectar() {
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    for (const m of messages) { try { await salvar(m, { baixar: true }); } catch (e) { log('erro ao salvar', e.message); } }
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    for (const m of messages) {
+      try {
+        const nova = await salvar(m, { baixar: true });
+        if (nova && type === 'notify') verificarAusencia(nova);
+      } catch (e) { log('erro ao salvar', e.message); }
+    }
   });
 
   // Histórico inicial (só texto e metadados; mídia antiga já não está disponível).

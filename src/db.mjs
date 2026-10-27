@@ -30,7 +30,14 @@ export function abrirDb() {
       PRIMARY KEY (chat, id)
     );
     CREATE INDEX IF NOT EXISTS ix_msgs_chat_ts ON msgs (chat, ts);
-    -- Fila de envio. Só é preenchida por "wa enviar", sempre por comando explícito do usuário.
+    -- Mensagem de ausência: 1 aviso por chat por período (ver src/ausencia.mjs).
+    CREATE TABLE IF NOT EXISTS ausencia_enviada (
+      chat TEXT NOT NULL,
+      periodo TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      PRIMARY KEY (chat, periodo)
+    );
+    -- Fila de envio. Preenchida por "wa enviar" (comando explícito) e pela ausência configurada.
     CREATE TABLE IF NOT EXISTS outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat TEXT NOT NULL,
