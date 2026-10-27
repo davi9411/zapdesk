@@ -22,6 +22,7 @@ import { uptime } from 'node:os';
 import { PATHS } from './config.mjs';
 import { abrirDb, normEtiqueta } from './db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/prompts.mjs';
+import { criarTrava } from './agente/travas.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -147,7 +148,8 @@ function chamarClaude(prompt, timeoutMs = 240_000) {
 }
 
 // Trava final: nada de preço, nomes internos ou bastidores, mesmo que o modelo erre.
-const PROIBIDO = /(claude|anthropic|openai|chatgpt|\bgpt\b|\bdavi\b|R\$\s?\d|\d+\s?reais|\bpix\b|\bdesconto|\bfica pronto em\b|produto d[ao]|parceri|\bs[óo]ci[oa]s?\b|sociedade|royalt|exclusividade|revend|revenda|direitos (autorais|de uso)|\bcomiss[ãa]o|\b\d+\s?(dias?|semanas?|horas?)\s?([úu]teis|para (ficar|entregar)))/i;
+// (a lista fica em agente/travas.mjs; "nomesInternos" do agente.json acrescenta os nomes da equipe)
+const PROIBIDO = criarTrava((() => { try { return JSON.parse(readFileSync(ARQ_CFG, 'utf8')).nomesInternos; } catch { return null; } })() || ['Davi']);
 const textoAusencia = () => { try { return JSON.parse(readFileSync(join(PATHS.data, 'ausencia.json'), 'utf8')).texto; } catch { return null; } };
 // mensagem minha que não é do agente nem o aviso automático = alguém da equipe escrevendo
 const ehHumano = (cfg, texto, aus) => !(texto || '').startsWith(cabecalho(cfg)) && texto !== aus;

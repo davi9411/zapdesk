@@ -1,13 +1,13 @@
 {
-  "name": "wa-leitor",
-  "version": "0.1.0",
+  "name": "zapdesk",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Leitor local de WhatsApp (Baileys) com SQLite, transcrição sob demanda e liga/desliga por comando",
+  "description": "Atendimento de WhatsApp local: leitor (Baileys + SQLite), transcrição sob demanda, envio programado, etiquetas e agente de IA com aprovação humana",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/davi9411/wa-leitor.git"
+    "url": "git+https://github.com/davi9411/zapdesk.git"
   },
   "scripts": {
     "wa": "node src/cli.mjs",
