@@ -3,13 +3,14 @@
 import makeWASocket, * as B from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './regras/ausencia.mjs';
 import { classificar, jidChat, extensao } from './conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from './canais/fila.mjs';
+import { processoVivo } from './sistema.mjs';
+import { limparMidia } from './regras/limpeza.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers } = B;
 
@@ -22,7 +23,7 @@ const log = (...a) => logger.warn(a.join(' '));
 // Instância única: duas conexões com a mesma sessão se derrubam (erro 440). Se já há um listener vivo, sai.
 try {
   const outro = Number(readFileSync(PATHS.pid, 'utf8'));
-  if (outro && outro !== process.pid && !pidDeOutroBoot() && /node\.exe/i.test(execFileSync('tasklist', ['/FI', `PID eq ${outro}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' }))) {
+  if (outro && outro !== process.pid && !pidDeOutroBoot() && processoVivo(outro)) {
     console.error(`Já existe um listener rodando (PID ${outro}); este foi encerrado.`);
     process.exit(0);
   }
@@ -258,6 +259,20 @@ async function conectar() {
   sock.ev.on('contacts.update', (cs) => cs.forEach((c) => c.name && guardarContato(c)));
   sock.ev.on('labels.edit', (l) => { try { guardarEtiqueta(l); } catch (e) { log('erro etiqueta', e.message); } });
   sock.ev.on('labels.association', (a) => guardarAssociacao(a).catch((e) => log('erro etiqueta/chat', e.message)));
+}
+
+// ---------- limpeza automática de mídia (só se configurada: WA_LIMPEZA_DIAS e/ou WA_LIMPEZA_MAX_GB) ----------
+// Roda 10 min depois de subir e depois a cada 24 h. Texto e transcrições ficam no banco.
+const LIMPEZA_DIAS = Number(process.env.WA_LIMPEZA_DIAS || 0);
+const LIMPEZA_MAX_GB = Number(process.env.WA_LIMPEZA_MAX_GB || 0);
+if (LIMPEZA_DIAS || LIMPEZA_MAX_GB) {
+  const limpar = () => {
+    try {
+      const r = limparMidia(db, PATHS.midia, { dias: LIMPEZA_DIAS || 36500, maxBytes: LIMPEZA_MAX_GB ? LIMPEZA_MAX_GB * 1024 ** 3 : Infinity });
+      log(`limpeza: ${r.apagados} arquivo(s), ${(r.bytes / 1048576).toFixed(1)} MB; restam ${r.restantes}`);
+    } catch (e) { log('falha na limpeza', e.message); }
+  };
+  setTimeout(() => { limpar(); setInterval(limpar, 86_400_000); }, 600_000);
 }
 
 // ---------- pedido de histórico (recupera o que chegou com o leitor desligado) ----------

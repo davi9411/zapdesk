@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { PATHS, pidDeOutroBoot } from './config.mjs';
 import { parseQuando } from './regras/quando.mjs';
+import { processoVivo, python } from './sistema.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const [cmd, ...resto] = process.argv.slice(2);
@@ -33,11 +34,7 @@ function pidVivo() {
   if (!existsSync(PATHS.pid)) return null;
   const pid = Number(readFileSync(PATHS.pid, 'utf8'));
   if (!pid || pidDeOutroBoot()) return null;
-  try {
-    // confere que o PID é mesmo um node (evita PID reaproveitado após reiniciar o Windows)
-    const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
-    return /node\.exe/i.test(out) ? pid : null;
-  } catch { return null; }
+  return processoVivo(pid) ? pid : null; // no Windows confere que é mesmo um node (PID reaproveitado)
 }
 
 function desdeTs(o) {
@@ -160,7 +157,8 @@ async function preparar() {
   const args = [join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat.jid, '--desde', String(desdeTs(o))];
   if (o.modelo) args.push('--modelo', o.modelo);
   if (o.frames) args.push('--frames', o.frames);
-  const r = spawnSync('py', ['-3', ...args], { stdio: 'inherit' });
+  const [py, ...pyArgs] = python();
+  const r = spawnSync(py, [...pyArgs, ...args], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
@@ -253,12 +251,23 @@ async function etiqueta() {
   console.log(`${o.tirar ? 'Tirar' : 'Pôr'} etiqueta "${nome.join(' ')}" em ${c.nome || c.jid}: na fila (o listener aplica em até 5 s).`);
 }
 
+// wa limpar [--dias 7] [--max-gb 8] [--simular]   apaga mídia antiga (texto e transcrições ficam)
+async function limpar() {
+  const o = opcoes(resto);
+  const { limparMidia } = await import('./regras/limpeza.mjs');
+  const db = await abrir();
+  const dias = Number(o.dias ?? 7);
+  const maxBytes = o['max-gb'] ? Number(o['max-gb']) * 1024 ** 3 : Infinity;
+  const r = limparMidia(db, PATHS.midia, { dias, maxBytes, simular: !!o.simular });
+  console.log(`${o.simular ? '[simulação] apagaria' : 'Apagados'}: ${r.apagados} arquivo(s), ${(r.bytes / 1048576).toFixed(1)} MB. Restam ${r.restantes}.`);
+}
+
 function parear() {
   const r = spawnSync(process.execPath, ['--no-warnings', join(AQUI, 'parear.mjs'), resto[0] || ''], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
-const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta };
+const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 
@@ -274,7 +283,8 @@ if (!CMDS[cmd]) {
   wa cancelar <id>           cancela envio programado
   wa ausencia                mensagem de ausência: período, texto e quem já recebeu
   wa etiquetas               etiquetas do WhatsApp Business e quem está em cada uma
-  wa etiqueta <nome> <etiqueta> [--tirar]   põe ou tira uma etiqueta`);
+  wa etiqueta <nome> <etiqueta> [--tirar]   põe ou tira uma etiqueta
+  wa limpar [--dias 7] [--max-gb 8] [--simular]   apaga mídia antiga (texto e transcrições ficam)`);
   process.exit(cmd ? 1 : 0);
 }
 await CMDS[cmd]();

@@ -9,7 +9,9 @@ import { homedir, uptime } from 'node:os';
 const PASTA_SERVICO = 'C:\\wa-leitor';
 export const DATA_DIR = process.env.WA_DATA
   || (process.platform === 'win32' && existsSync(join(PASTA_SERVICO, 'auth', 'creds.json')) ? PASTA_SERVICO : null)
-  || join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'wa-leitor');
+  || (process.platform === 'win32'
+    ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'wa-leitor')
+    : join(homedir(), '.local', 'share', 'zapdesk')); // Linux fora do Docker (no Docker: WA_DATA=/data)
 
 export const PATHS = {
   data: DATA_DIR,

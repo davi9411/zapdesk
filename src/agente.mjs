@@ -25,13 +25,14 @@ import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
 import { cartao } from './notificador/cartao.mjs';
+import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
 const ARQ_PID = join(PATHS.data, 'agente.pid');
 const ARQ_LOG = join(PATHS.data, 'agente.log');
 const PASTA_CLAUDE = join(PATHS.data, 'agente'); // cwd vazio p/ o claude -p (sem memória de projeto)
-const CLAUDE = process.env.WA_CLAUDE || join(process.env.USERPROFILE || 'C:\\Users\\davis', '.local', 'bin', 'claude.exe');
+const CLAUDE = claudeExe();
 const DEBOUNCE_S = 20;     // espera o cliente terminar de mandar várias mensagens
 const CICLO_MS = 10_000;
 
@@ -42,7 +43,7 @@ function outroVivo() {
   try {
     const pid = Number(readFileSync(ARQ_PID, 'utf8'));
     if (!pid || pid === process.pid || statSync(ARQ_PID).mtimeMs < Date.now() - uptime() * 1000) return false;
-    return /node\.exe/i.test(execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' }));
+    return processoVivo(pid);
   } catch { return false; }
 }
 if (outroVivo()) { process.exit(0); }
@@ -165,7 +166,8 @@ const ehHumano = (cfg, texto, aus) => !(texto || '').startsWith(cabecalho(cfg)) 
 function prepararMidia(chat, desde) {
   const pend = db.prepare("SELECT COUNT(*) n FROM msgs WHERE chat = ? AND ts >= ? AND tipo IN ('audio','video') AND arquivo IS NOT NULL AND transcricao IS NULL").get(chat, desde).n;
   if (!pend) return;
-  const r = spawnSync('py', ['-3', join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { timeout: 300_000, windowsHide: true, encoding: 'utf8' });
+  const [py, ...pyArgs] = python();
+  const r = spawnSync(py, [...pyArgs, join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { timeout: 300_000, windowsHide: true, encoding: 'utf8' });
   log(`preparar ${chat}: ${r.status} ${(r.stdout || '').trim().split('\n').pop()}`);
 }
 
@@ -388,12 +390,13 @@ let ultimaVigia = 0;
 let leitorCaidoDesde = 0;
 const ps = (cmd) => execFileSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8', windowsHide: true }).trim();
 function vigiarLeitor(cfg) {
+  if (!WIN) return; // no Linux/Docker quem religa é o próprio orquestrador (restart: unless-stopped)
   if (Date.now() - ultimaVigia < 60_000) return;
   ultimaVigia = Date.now();
   let vivo = false;
   try {
     const pid = Number(readFileSync(PATHS.pid, 'utf8'));
-    vivo = !!pid && /node\.exe/i.test(execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true }));
+    vivo = processoVivo(pid);
   } catch {}
   if (vivo) {
     if (leitorCaidoDesde) {

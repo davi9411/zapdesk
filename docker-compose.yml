@@ -1,0 +1,33 @@
+# Zapdesk no servidor: leitor + agente, sempre ligados, dados num volume só.
+# Primeiro uso (uma vez):
+#   docker compose run --rm leitor node src/parear.mjs 55DDDNUMERO   # pareia (código de 8 dígitos)
+#   docker compose run --rm -it agente claude                        # login do Claude Code (/login)
+#   docker compose up -d
+# Comandos do dia a dia: docker compose exec leitor node src/cli.mjs status | chats | ler <nome> ...
+services:
+  leitor:
+    image: ghcr.io/davi9411/zapdesk:latest
+    build: .
+    command: ["node", "--no-warnings", "src/listener.mjs"]
+    restart: unless-stopped
+    volumes:
+      - dados:/data
+    environment:
+      WA_LIMPEZA_DIAS: "7"      # apaga mídia com mais de 7 dias (texto e transcrições ficam)
+      WA_LIMPEZA_MAX_GB: "8"    # e nunca deixa a mídia passar de 8 GB
+    mem_limit: 768m
+
+  agente:
+    image: ghcr.io/davi9411/zapdesk:latest
+    command: ["node", "--no-warnings", "src/agente.mjs"]
+    restart: unless-stopped
+    depends_on:
+      - leitor
+    volumes:
+      - dados:/data
+      - claude-home:/home/node   # login e configuração do Claude Code
+    mem_limit: 1g
+
+volumes:
+  dados:
+  claude-home:
