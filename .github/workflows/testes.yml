@@ -16,5 +16,5 @@ jobs:
           cache: npm
       - run: npm ci
       - name: sintaxe
-        run: for f in src/*.mjs src/agente/*.mjs; do node --check "$f"; done
+        run: for f in src/*.mjs src/*/*.mjs; do node --check "$f"; done
       - run: npm test
