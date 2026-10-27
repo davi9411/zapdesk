@@ -11,7 +11,7 @@
 // }
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { PATHS } from './config.mjs';
+import { PATHS } from '../config.mjs';
 
 export const ARQ_AUSENCIA = join(PATHS.data, 'ausencia.json');
 const RECENTE_MS = 10 * 60_000; // só responde mensagem recebida há menos de 10 min (nunca histórico)

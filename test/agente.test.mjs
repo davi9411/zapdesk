@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { criarTrava } from '../src/agente/travas.mjs';
 import { promptCliente, promptComandoDavi } from '../src/agente/prompts.mjs';
-import { normEtiqueta } from '../src/db.mjs';
+import { normEtiqueta } from '../src/armazenamento/db.mjs';
 
 const trava = criarTrava(['Davi']);
 

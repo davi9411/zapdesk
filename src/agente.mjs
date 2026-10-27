@@ -20,9 +20,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { uptime } from 'node:os';
 import { PATHS } from './config.mjs';
-import { abrirDb, normEtiqueta } from './db.mjs';
+import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
+import { cartao } from './notificador/cartao.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -168,14 +169,6 @@ const dentroAlerta = (cfg) => { const h = new Date().getHours(); return h >= cfg
 function novoCaso(chat, nome, tipo, resumo, pergunta, sugestao = null) {
   return Number(db.prepare('INSERT INTO agente_caso (chat, nome, resumo, pergunta, criado, tipo, sugestao) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(chat, nome, resumo || '', pergunta || '', agora(), tipo, sugestao).lastInsertRowid);
-}
-
-// aviso padrão de caso para o Davi: resumo curto + sugestão + 3 opções
-function cartao({ id, icone, titulo, quem, origem, resumo, decidir, sugestao }) {
-  return `${icone} *#${id} · ${quem}*${titulo ? ` — ${titulo}` : ''}\n${resumo || '-'}${origem ? `\n_Conheceu por: ${origem}_` : ''}${decidir ? `\n❓ ${decidir}` : ''}`
-    + `${sugestao ? `\n\n💡 *Sugestão:* "${sugestao}"` : ''}\n\n`
-    + `${sugestao ? `1️⃣ *#${id} ok* → mando a sugestão\n2️⃣` : '1️⃣'} *#${id} sua orientação* → escrevo a partir do que você disser\n`
-    + `${sugestao ? '3️⃣' : '2️⃣'} *#${id} depois* → aviso que os dados foram coletados e a equipe responde em breve`;
 }
 
 // contexto comum do prompt do cliente

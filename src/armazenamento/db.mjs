@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { PATHS, garantirPastas } from './config.mjs';
+import { PATHS, garantirPastas } from '../config.mjs';
 
 // nome de etiqueta sem emoji/número/acento, para comparar ("Pessoal🏠" == "pessoal")
 export const normEtiqueta = (s) => String(s || '').normalize('NFD').replace(/[^a-zA-Z ]+/g, '').replace(/\s+/g, ' ').trim().toLowerCase();

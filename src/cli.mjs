@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, openSync
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { PATHS, pidDeOutroBoot } from './config.mjs';
+import { parseQuando } from './regras/quando.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const [cmd, ...resto] = process.argv.slice(2);
@@ -46,7 +47,7 @@ function desdeTs(o) {
 }
 
 async function abrir() {
-  const { abrirDb } = await import('./db.mjs');
+  const { abrirDb } = await import('./armazenamento/db.mjs');
   return abrirDb();
 }
 
@@ -163,15 +164,6 @@ async function preparar() {
   process.exit(r.status ?? 1);
 }
 
-// "16:30" (hoje) ou "2026-10-08 16:30" -> timestamp unix
-function parseQuando(s) {
-  let d;
-  if (/^\d{1,2}:\d{2}$/.test(s)) { const [h, m] = s.split(':').map(Number); d = new Date(); d.setHours(h, m, 0, 0); }
-  else if (/^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}$/.test(s)) d = new Date(s.replace(' ', 'T').replace(/T(\d):/, 'T0$1:'));
-  if (!d || isNaN(d)) { console.error('Hora inválida. Use "16:30" (hoje) ou "AAAA-MM-DD HH:MM".'); process.exit(1); }
-  return Math.floor(d.getTime() / 1000);
-}
-
 async function enviar() {
   const o = opcoes(resto);
   const alvo = o._.join(' ');
@@ -185,6 +177,7 @@ async function enviar() {
   const chat = acharChat(db, alvo);
   const agora = Math.floor(Date.now() / 1000);
   const quando = o.em ? parseQuando(o.em) : agora;
+  if (quando == null) { console.error('Hora inválida. Use "16:30" (hoje) ou "AAAA-MM-DD HH:MM".'); process.exit(1); }
   if (o.em && quando <= agora) { console.error('Essa hora já passou.'); process.exit(1); }
   if (!o.em && !pidVivo()) { console.error('Leitor desligado: ligue primeiro (wa ligar) ou use --em para programar.'); process.exit(1); }
 
@@ -226,7 +219,7 @@ async function cancelar() {
 }
 
 async function ausencia() {
-  const { lerAusencia, ARQ_AUSENCIA } = await import('./ausencia.mjs');
+  const { lerAusencia, ARQ_AUSENCIA } = await import('./regras/ausencia.mjs');
   const a = lerAusencia();
   if (!a) { console.log(`Ausência desligada (sem configuração válida em ${ARQ_AUSENCIA}).`); return; }
   const agora = Date.now();

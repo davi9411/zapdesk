@@ -71,15 +71,20 @@ com o prompt em [`src/agente/prompts.mjs`](src/agente/prompts.mjs).
 Os processos só conversam pelo banco: o agente nunca fala com o WhatsApp diretamente, ele escreve na
 fila `outbox` (mensagens) ou `acoes` (etiquetas) e o listener executa.
 
-| Arquivo | Papel |
+| Caminho | Papel |
 |---|---|
-| `src/listener.mjs` | conexão, gravação, fila de envio, etiquetas, aviso de ausência |
-| `src/agente.mjs` | ciclo do agente: clientes, casos, comandos do dono, lembretes |
-| `src/agente/prompts.mjs` | instruções do modelo (atendimento, sugestão, comando do dono) |
-| `src/agente/travas.mjs` | bloqueio final de termos proibidos |
-| `src/ausencia.mjs` | regras do aviso de ausência |
+| `src/listener.mjs` | processo do leitor: conexão, gravação, fila de envio, etiquetas, aviso de ausência |
+| `src/agente.mjs` | processo do agente: clientes, casos, comandos do dono, lembretes |
 | `src/cli.mjs` | comandos `wa ...` |
+| `src/conector/` | formato das mensagens do WhatsApp (tipo, texto, LID → número, extensão) |
+| `src/armazenamento/` | banco SQLite (tabelas e migrações) |
+| `src/regras/` | aviso de ausência e leitura de horários ("16:30") |
+| `src/canais/` | regras da fila de envio (atraso máximo, montagem das mensagens) |
+| `src/notificador/` | aviso de caso para o dono (resumo, sugestão, 3 opções) |
+| `src/agente/` | prompts do modelo e trava final de termos proibidos |
 | `tools/instalar-servico.ps1` | tarefas agendadas `wa-leitor` e `wa-agente` |
+
+Os três processos ficam na raiz de `src/` e só orquestram; a lógica testável fica nas pastas.
 
 ## Stack
 - Node.js ≥ 22.5 (`node:sqlite` nativo, sem compilação) · Baileys 7 · pino
@@ -119,7 +124,7 @@ wa etiqueta <nome> <etiqueta> [--tirar]
 ```
 npm test
 ```
-Rodam a cada push no GitHub Actions (regras do aviso de ausência, travas do agente, prompts e etiquetas).
+Rodam a cada push no GitHub Actions: aviso de ausência, travas e prompts do agente, etiquetas, formato das mensagens, fila de envio, horários e aviso de caso.
 
 ## Dados e privacidade
 - Pasta de dados fora do repositório (`C:\wa-leitor` no modo serviço, senão `%LOCALAPPDATA%\wa-leitor`):

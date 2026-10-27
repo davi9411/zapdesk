@@ -6,8 +6,8 @@ import { join } from 'node:path';
 
 // banco e configuração numa pasta temporária (nunca na pasta real do leitor)
 process.env.WA_DATA = mkdtempSync(join(tmpdir(), 'wa-teste-'));
-const { abrirDb } = await import('../src/db.mjs');
-const { lerAusencia, deveResponder, criarRegistro } = await import('../src/ausencia.mjs');
+const { abrirDb } = await import('../src/armazenamento/db.mjs');
+const { lerAusencia, deveResponder, criarRegistro } = await import('../src/regras/ausencia.mjs');
 
 const agora = Date.now();
 const cfg = (extra = {}) => {
