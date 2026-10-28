@@ -122,14 +122,14 @@ function estadoChat(chat) {
 
 // ---------- conversa em texto para o modelo ----------
 function textoConversa(cfg, chat, limite = 25) {
-  const aus = (() => { try { return JSON.parse(readFileSync(join(PATHS.data, 'ausencia.json'), 'utf8')).texto; } catch { return null; } })();
+  const aus = textoAusencia();
   const rows = db.prepare('SELECT * FROM (SELECT * FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT ?) ORDER BY ts').all(chat, limite);
   const cab = cabecalho(cfg);
   return rows.map((m) => {
     const quando = new Date(m.ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     let quem = 'CLIENTE';
     let t = m.texto || '';
-    if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); const rod = rodape(cfg); if (rod && t.endsWith(rod)) t = t.slice(0, -rod.length); } else if (aus && t === aus) quem = 'AVISO'; else quem = 'EQUIPE'; }
+    if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); const rod = rodape(cfg); if (rod && t.endsWith(rod)) t = t.slice(0, -rod.length); } else if (ehDoAgente(cfg, t)) quem = cfg.nome.toUpperCase(); else if (aus.includes(t)) quem = 'AVISO'; else quem = 'EQUIPE'; }
     if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${m.transcricao}"` : '(sem transcrição)'}`;
     else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}] ${m.transcricao ? `fala: "${m.transcricao}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
@@ -168,9 +168,17 @@ function chamarClaude(prompt, timeoutMs = 240_000, { ferramentas = ['Read'], pas
 // Trava final: nada de preço, nomes internos ou bastidores, mesmo que o modelo erre.
 // (a lista fica em agente/travas.mjs; "nomesInternos" do agente.json acrescenta os nomes da equipe)
 const PROIBIDO = criarTrava((() => { try { return JSON.parse(readFileSync(ARQ_CFG, 'utf8')).nomesInternos; } catch { return null; } })() || ['Davi']);
-const textoAusencia = () => { try { return JSON.parse(readFileSync(join(PATHS.data, 'ausencia.json'), 'utf8')).texto; } catch { return null; } };
+// textos do aviso automático: o atual e os anteriores ("textosAnteriores"), para quem recebeu a versão antiga
+function textoAusencia() {
+  try {
+    const a = JSON.parse(readFileSync(join(PATHS.data, 'ausencia.json'), 'utf8'));
+    return [a.texto, ...(a.textosAnteriores || [])].filter(Boolean);
+  } catch { return []; }
+}
+// documento enviado pelo agente fica salvo como "arquivo.zip — legenda": o cabeçalho vem depois do nome
+const ehDoAgente = (cfg, texto) => { const t = texto || ''; const cab = cabecalho(cfg); return t.startsWith(cab) || t.includes(` — ${cab}`); };
 // mensagem minha que não é do agente nem o aviso automático = alguém da equipe escrevendo
-const ehHumano = (cfg, texto, aus) => !(texto || '').startsWith(cabecalho(cfg)) && texto !== aus;
+const ehHumano = (cfg, texto, aus) => !ehDoAgente(cfg, texto) && !aus.includes(texto);
 
 // ---------- ficha do cliente (Notion + pasta do robô no repositório) ----------
 // Montada pelo modelo com ferramentas SÓ de leitura; guardada por "fichas.dias" dias. Sem valores, CPF ou e-mail.
