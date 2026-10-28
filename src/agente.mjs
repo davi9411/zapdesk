@@ -9,7 +9,8 @@
 //   "maxPorChatDia": 12, "humanoHoras": 12, "semRespostaMin": 15, "lembrarCasoMin": 60, "alertaHoras": [8, 22],
 //   "evento": { "inicio": "...", "fim": "...", "descricao": "um evento de ...", "retorno": "sexta-feira (30/10)" },
 //   "horario": { "dias": [1,2,3,4,5], "inicio": "09:00", "fim": "18:00", "feriados": [], "descricao": "seg a sex, 9h às 18h" },
-//   "contexto": "aviso do momento", "contextoAte": "...", "rodape": "_..._", "pingUrl": "https://hc-ping.com/<uuid>" }
+//   "contexto": "aviso do momento", "contextoAte": "...", "rodape": "_..._", "pingUrl": "https://hc-ping.com/<uuid>",
+//   "fichas": { "repo": "<pasta com uma subpasta por cliente>", "dias": 3 } }
 // Se a equipe (humano) escreveu na conversa nas últimas "humanoHoras", o agente não responde o cliente
 // sozinho: se o cliente ficar "semRespostaMin" sem resposta, avisa o Davi com uma sugestão (#N ok envia).
 // Casos parados há "lembrarCasoMin" ganham um lembrete. Avisos só dentro de "alertaHoras".
@@ -19,13 +20,13 @@
 // "#N orientação" / "#N ok" / "#N depois", "REGRA: texto" / "REGRAS" / "REGRA- N" (regras ensinadas)
 // e texto livre ("manda pro Fulano que...", "marca a Fulana como pessoal").
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { uptime } from 'node:os';
 import { PATHS } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
-import { promptCliente, promptRespostaDavi, promptComandoDavi } from './agente/prompts.mjs';
+import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
@@ -65,6 +66,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_caso (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, nome TEXT, resumo TEXT,
     pergunta TEXT, status TEXT DEFAULT 'aberto', criado INTEGER, fechado INTEGER, resposta TEXT);
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
+  CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
 for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
@@ -138,11 +140,14 @@ function textoConversa(cfg, chat, limite = 25) {
 }
 
 // ---------- modelo (claude -p do plano) ----------
-function chamarClaude(prompt, timeoutMs = 240_000) {
+// opcoes.ferramentas: ferramentas liberadas (só leitura); opcoes.pastas: pastas extras que o Read/Grep pode ver
+function chamarClaude(prompt, timeoutMs = 240_000, { ferramentas = ['Read'], pastas = [], turnos = 6 } = {}) {
   return new Promise((resolve, reject) => {
     // sem chave de API/rotas herdadas: usa o login da assinatura (uma ANTHROPIC_API_KEY no ambiente teria prioridade e cobraria crédito)
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(ANTHROPIC_|CLAUDECODE$|CLAUDE_CODE_)/.test(k)));
-    const p = spawn(CLAUDE, ['-p', '--output-format', 'json', '--allowedTools', 'Read', '--max-turns', '6'], { cwd: PASTA_CLAUDE, windowsHide: true, env });
+    const args = ['-p', '--output-format', 'json', '--allowedTools', ferramentas.join(','), '--max-turns', String(turnos)];
+    for (const d of pastas) args.push('--add-dir', d);
+    const p = spawn(CLAUDE, args, { cwd: PASTA_CLAUDE, windowsHide: true, env });
     let out = '', err = '';
     const t = setTimeout(() => { p.kill(); reject(new Error('timeout do claude')); }, timeoutMs);
     p.stdout.on('data', (d) => { out += d; });
@@ -166,6 +171,26 @@ const PROIBIDO = criarTrava((() => { try { return JSON.parse(readFileSync(ARQ_CF
 const textoAusencia = () => { try { return JSON.parse(readFileSync(join(PATHS.data, 'ausencia.json'), 'utf8')).texto; } catch { return null; } };
 // mensagem minha que não é do agente nem o aviso automático = alguém da equipe escrevendo
 const ehHumano = (cfg, texto, aus) => !(texto || '').startsWith(cabecalho(cfg)) && texto !== aus;
+
+// ---------- ficha do cliente (Notion + pasta do robô no repositório) ----------
+// Montada pelo modelo com ferramentas SÓ de leitura; guardada por "fichas.dias" dias. Sem valores, CPF ou e-mail.
+const NOTION_LEITURA = ['mcp__claude_ai_Notion__notion-query-data-sources', 'mcp__claude_ai_Notion__notion-fetch'];
+const fichaGuardada = (chat) => { try { return JSON.parse(db.prepare('SELECT dados FROM agente_ficha WHERE chat = ?').get(chat)?.dados || 'null'); } catch { return null; } };
+async function obterFicha(cfg, chat, nome) {
+  if (!cfg.fichas?.repo) return null;
+  const linha = db.prepare('SELECT dados, atualizado FROM agente_ficha WHERE chat = ?').get(chat);
+  if (linha && agora() - linha.atualizado < (cfg.fichas.dias ?? 3) * 86400) return fichaGuardada(chat);
+  let pastas = [];
+  try { pastas = readdirSync(cfg.fichas.repo, { withFileTypes: true }).filter((d) => d.isDirectory() && !/^(aa|zz|\.)/.test(d.name)).map((d) => d.name); } catch {}
+  const e = estadoChat(chat);
+  const prompt = promptFicha({ numero: chat.split('@')[0], nomes: [nome, e.nome_cliente].filter(Boolean), pastas, repo: cfg.fichas.repo });
+  try {
+    const f = await chamarClaude(prompt, 180_000, { ferramentas: [...NOTION_LEITURA, 'Read', 'Glob', 'Grep'], pastas: [cfg.fichas.repo], turnos: 16 });
+    db.prepare('INSERT OR REPLACE INTO agente_ficha (chat, dados, atualizado) VALUES (?, ?, ?)').run(chat, JSON.stringify(f), agora());
+    log(`ficha ${chat}: ${f.encontrado ? `${f.nome} (${(f.servicos || []).length} serviços)` : 'não encontrado no Notion'}`);
+    return f;
+  } catch (err) { log(`ficha ${chat} falhou: ${err.message.slice(0, 150)}`); return linha ? fichaGuardada(chat) : null; }
+}
 
 // ---------- preparar mídia (transcrição) ----------
 function prepararMidia(chat, desde) {
@@ -194,7 +219,7 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
   const teveHumano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts > ?').all(chat, agora() - 3 * 86400).some((m) => ehHumano(cfg, m.texto, aus));
   // há quanto tempo a mensagem mais antiga ainda não respondida espera (retomada depois de ficar fora do ar)
   const pendente = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').get(chat, e.ultimo_ts || 0).t;
-  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(),
+  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(), ficha: fichaGuardada(chat),
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
@@ -249,6 +274,7 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
     if (e.msgs_dia === cfg.maxPorChatDia) { avisarDavi(cfg, `Limite de ${cfg.maxPorChatDia} respostas hoje atingido com ${nome || chat}. Parei de responder essa conversa até amanhã.`); db.prepare('UPDATE agente_chat SET msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat); }
     return;
   }
+  await obterFicha(cfg, chat, nome); // conhece o cliente (Notion + repositório) antes de responder
   const prompt = promptCliente(argsPrompt(cfg, chat, e));
   let r;
   try { r = await chamarClaude(prompt); }
@@ -280,7 +306,8 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
     const quem = `${r.nome_cliente || e.nome_cliente || nome || 'cliente'} (${numeroDe(chat)})`;
     const enc = acao === 'encaminhar';
     avisarDavi(cfg, cartao({ id, icone: aberto ? '🔄' : enc ? '📨' : '📋', titulo: `${aberto ? 'atualização · ' : ''}${r.categoria || 'atendimento'}`, quem,
-      origem: aberto ? null : r.origem || e.origem, resumo: r.resumo_davi || r.resumo, decidir: enc ? null : r.pergunta_davi, sugestao: sug })
+      origem: aberto ? null : r.origem || e.origem, resumo: r.resumo_davi || r.resumo, decidir: enc ? null : r.pergunta_davi, sugestao: sug,
+      ficha: aberto ? null : fichaGuardada(chat) })
       + (enc ? '\n\nOu siga direto na conversa (eu paro de responder quando você escrever).' : ''));
   }
 }
