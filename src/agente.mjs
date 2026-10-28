@@ -68,7 +68,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -237,6 +237,9 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
     contexto: contextoAgora(cfg),
+    // quando uma pessoa da equipe atende (para o cliente escolher entre o agente e a equipe)
+    retornoEquipe: cfg.horario ? (aberto(cfg.horario) ? 'ainda hoje, no horário de atendimento' : textoRetorno(cfg.horario)) : null,
+    escolhaFeita: !!(e.escolha || e.apresentado),
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
 }
 
@@ -298,6 +301,12 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (r.nome_cliente) db.prepare('UPDATE agente_chat SET nome_cliente = ? WHERE chat = ?').run(String(r.nome_cliente).slice(0, 60), chat);
   if (r.origem) db.prepare('UPDATE agente_chat SET origem = ? WHERE chat = ?').run(String(r.origem).slice(0, 80), chat);
   // primeiro contato que diz já ser cliente (ex.: comprou com outro número): procura no Notion pelo nome informado
+  // escolha do primeiro contato: seguir com o agente ou aguardar uma pessoa da equipe
+  if (r.escolha === 'ia' && !e.escolha) db.prepare("UPDATE agente_chat SET escolha = 'ia' WHERE chat = ?").run(chat);
+  if (r.escolha === 'humano') {
+    db.prepare("UPDATE agente_chat SET escolha = 'humano', prefere_humano_ts = ? WHERE chat = ?").run(agora(), chat);
+    log(`${chat} prefere aguardar a equipe`);
+  }
   if (r.diz_ja_cliente && !e.ja_cliente) {
     db.prepare('UPDATE agente_chat SET ja_cliente = 1 WHERE chat = ?').run(chat);
     db.prepare('DELETE FROM agente_ficha WHERE chat = ?').run(chat);
@@ -307,6 +316,7 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
 
   if (r.acao === 'silencio' || !r.mensagem_cliente) return;
   let texto = String(r.mensagem_cliente).trim().slice(0, 1500);
+  if (texto.length > 600) log(`resposta longa (${texto.length} caracteres) para ${chat}`);
   let acao = r.acao;
   if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou verificando essas informações aqui no sistema e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
   enfileirar(chat, nome, paraCliente(cfg, texto));
@@ -565,6 +575,12 @@ async function ciclo() {
       const numero = c.chat.split('@')[0];
       if (cfg.excluir.includes(numero) || (cfg.somente.length && !cfg.somente.includes(numero))) continue;
       if (ehPessoal(cfg, c.chat)) continue; // contato pessoal ou de outro robô: o agente não entra
+      // o cliente preferiu aguardar uma pessoa: o agente não responde por 3 dias (o caso já foi para a equipe)
+      const est = estadoChat(c.chat);
+      if (est.escolha === 'humano' && agora() - est.prefere_humano_ts < 3 * 86400) {
+        if (c.ult > est.ultimo_ts) db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
+        continue;
+      }
       const e = estadoChat(c.chat);
       if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
       const aus = textoAusencia();

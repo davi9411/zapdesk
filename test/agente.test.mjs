@@ -34,10 +34,19 @@ test('nome de etiqueta ignora emoji, número e acento', () => {
 test('prompt do cliente muda com evento, sugestão e espera longa', () => {
   const base = { nome: 'Dante', empresa: 'Empresa X', conversa: '[x] CLIENTE: oi', casosAbertos: '', agoraTxt: 'agora' };
   const evento = promptCliente({ ...base, primeiroContato: true, evento: { descricao: 'um evento', retorno: 'sexta' } });
-  assert.match(evento, /Enquanto a equipe está no evento/);
-  const normal = promptCliente({ ...base, primeiroContato: true, clienteNovo: true });
+  assert.match(evento, /aviso automático do evento/);
+  assert.match(evento, /equipe, que retorna na sexta/);
+  const normal = promptCliente({ ...base, primeiroContato: true, clienteNovo: true, retornoEquipe: 'amanhã às 09:00' });
   assert.match(normal, /como\s+conheceu/);
-  assert.doesNotMatch(normal, /Enquanto a equipe está no evento/);
+  assert.doesNotMatch(normal, /aviso automático do evento/);
+  // primeiro contato: oferece pré-atendimento com a IA ou aguardar a equipe
+  assert.match(normal, /pré-atendimento/);
+  assert.match(normal, /retorna amanhã às 09:00/);
+  assert.match(normal, /escolha="humano"/);
+  // depois da escolha, não pergunta de novo
+  assert.doesNotMatch(promptCliente({ ...base, primeiroContato: false, escolhaFeita: true }), /ESCOLHA DO CLIENTE/);
+  // mensagens curtas
+  assert.match(normal, /no máximo 3 passos por mensagem/);
   assert.match(promptCliente({ ...base, sugestao: true }), /SUGESTÃO/);
   assert.match(promptCliente({ ...base, esperaMin: 180 }), /3 horas/);
   assert.doesNotMatch(promptCliente({ ...base, esperaMin: 5 }), /desculpas pela demora/);

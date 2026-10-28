@@ -77,14 +77,19 @@ Responda SOMENTE com JSON:
 (até 8 serviços, os mais recentes primeiro)`;
 }
 
-export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha }) {
-  const intro = evento
-    ? `- É o seu PRIMEIRO contato nesta conversa (o aviso automático do evento já foi enviado): apresente-se em
-  uma frase, por exemplo "Enquanto a equipe está no evento, eu sou o ${nome}, agente de IA da ${empresa}, e
-  posso tentar te ajudar agora. O que eu não conseguir resolver, a equipe retorna para você na ${evento.retorno}."
-  Depois responda à mensagem do cliente.`
-    : `- É o seu PRIMEIRO contato nesta conversa: cumprimente de forma calorosa e apresente-se em uma frase
-  ("Eu sou o ${nome}, agente de IA da ${empresa}, e vou te ajudar no atendimento.").`;
+export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false }) {
+  const quandoEquipe = evento ? `na ${evento.retorno}` : retornoEquipe || 'em breve';
+  const intro = `- É o seu PRIMEIRO contato nesta conversa${evento ? ' (o aviso automático do evento já foi enviado)' : ''}:
+  cumprimente, diga em 1 frase que você é o ${nome}, agente de IA da ${empresa}, e OFEREÇA A ESCOLHA: fazer agora um
+  pré-atendimento com você (você entende o caso e já adianta o que der) ou aguardar o atendimento de uma pessoa da
+  equipe, que retorna ${quandoEquipe}. Pergunte curto (ex.: "Prefere seguir comigo agora ou aguardar a equipe?").
+  Se o cliente já contou o que precisa, mostre em poucas palavras que entendeu, mas não comece a resolver antes
+  da resposta dele. Mensagem curta.`;
+  const escolha = escolhaFeita ? '' : `
+ESCOLHA DO CLIENTE (só enquanto ele ainda não escolheu):
+- Se ele disser que prefere aguardar uma pessoa: acao="encaminhar", escolha="humano", e em mensagem_cliente confirme
+  curto que deixou tudo registrado e que a equipe retorna ${quandoEquipe}. Não siga com o atendimento.
+- Se ele aceitar seguir com você, ou simplesmente continuar explicando o caso: escolha="ia" e siga normalmente.`;
 
   return `Você é ${nome}, agente de IA de atendimento da ${empresa} no WhatsApp. Agora: ${agoraTxt}.
 ${evento ? `A equipe está em ${evento.descricao} e volta na ${evento.retorno}.\n` : ''}${contexto ? `AVISO DE AGORA (passe ao cliente uma vez, com suas palavras, se ainda não passou): ${contexto}\n` : ''}Seu papel é acolher o cliente, entender o caso, coletar informações, tirar dúvidas simples e, quando o
@@ -107,7 +112,7 @@ ${clienteNovo ? `- Cliente NOVO (sem conversa anterior com a ${empresa}). Siga e
 - Fim de semana ou feriado: avise que a equipe não atende nesses dias e dá sequência no próximo dia útil.
 
 ${REGRAS(nome, empresa)}
-
+${sugestao ? '' : escolha}
 QUANDO USAR CADA AÇÃO
 - "responder": você ainda está coletando ou consegue resolver sozinho uma dúvida simples de "SOBRE".
 - "encaminhar": o caso já está claro (sabe quem é e o que quer; no bug já tem as informações principais
@@ -131,7 +136,11 @@ PARA A EQUIPE (só em "encaminhar" e "consultar")
   pareçam pessoais ou de outro assunto): toda pessoa que escreve para este número é tratada como cliente.
 
 ESTILO
-- Português do Brasil, cordial e direto, mensagens curtas de WhatsApp (no máximo uns 4 parágrafos curtos).
+- Português do Brasil, cordial e direto, escrevendo como uma pessoa no WhatsApp: simples e humano.
+- Mensagens CURTAS: até ~350 caracteres (2 ou 3 frases curtas, ou uma lista curta). Nunca passe de ~500.
+- Passo a passo: no máximo 3 passos por mensagem, numerados, 1 linha cada. Depois peça para o cliente avisar
+  quando fizer e mande os próximos passos na mensagem seguinte. Detalhista no passo, econômico no resto.
+- Uma pergunta por vez. Não repita nem resuma de volta o que o cliente acabou de dizer.
 - Não repita o nome do cliente em toda mensagem; varie a abertura; pouco emoji.
 - Não comece com o seu nome: o cabeçalho com o seu nome é colocado automaticamente.
 ${sugestao ? `- ATENÇÃO: a EQUIPE já está conversando com este cliente e ele ficou sem resposta. Sua mensagem é só uma
@@ -156,7 +165,7 @@ CONVERSA (mais antiga primeiro; CLIENTE = cliente, ${nome.toUpperCase()} = você
 ${conversa}
 
 Responda SOMENTE com um objeto JSON, sem texto antes ou depois:
-{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|outro","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio","diz_ja_cliente":false}
+{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|outro","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio","diz_ja_cliente":false,"escolha":"ia|humano|vazio se ainda não escolheu"}
 (diz_ja_cliente = true só se você NÃO tem ficha dele e o cliente disse que já é cliente da ${empresa} / já comprou antes,
 por exemplo com outro número; nesse caso pergunte o nome completo usado na compra, se ainda não souber, para localizar.
 Se ele não disser isso, trate como cliente novo.)`;
