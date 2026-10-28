@@ -54,6 +54,17 @@ cliente escreve ──► agente responde (coleta) ──► caso claro ou decis
   mensagem não sai se citar preço, prazo, temas comerciais, bastidores de IA ou nomes internos.
 - **Modo evento**: em datas configuradas, o aviso de ausência sai antes e o agente se apresenta
   dizendo quando a equipe volta.
+- **Horário de atendimento**: fora dele (fim de semana e feriados nacionais incluídos) o agente avisa
+  quando a equipe volta, com data e hora ("terça-feira (03/11) às 09:00").
+- **Colega, não repetidor**: antes de mandar a orientação do dono ao cliente, o agente avalia; se ela
+  estiver ambígua, contradizer a conversa ou parecer errada, ele responde com a ressalva e uma proposta
+  de texto, e os dois chegam a um consenso. Perguntas do dono sobre o caso são respondidas só a ele.
+- **Responde por áudio**: o dono pode mandar áudio ("hashtag seis, pede o print do Diário"); o agente
+  transcreve, mostra o que entendeu e executa.
+- **Regras ensinadas**: `REGRA: ...` no WhatsApp do dono vira regra permanente do atendimento.
+- **Aviso em todas as mensagens** de que é um agente de IA em desenvolvimento e pode errar.
+- **Vigia e sinal de vida**: religa o leitor se ele cair e pinga um serviço de monitoramento
+  (Healthchecks.io) para avisar por e-mail se a máquina parar.
 
 O modelo é chamado pelo `claude -p` do Claude Code (assinatura, não API), uma chamada por resposta,
 com o prompt em [`src/agente/prompts.mjs`](src/agente/prompts.mjs).
@@ -78,10 +89,11 @@ fila `outbox` (mensagens) ou `acoes` (etiquetas) e o listener executa.
 | `src/cli.mjs` | comandos `wa ...` |
 | `src/conector/` | formato das mensagens do WhatsApp (tipo, texto, LID → número, extensão) |
 | `src/armazenamento/` | banco SQLite (tabelas e migrações) |
-| `src/regras/` | aviso de ausência e leitura de horários ("16:30") |
+| `src/regras/` | aviso de ausência, horário de atendimento, limpeza de mídia e horários ("16:30") |
 | `src/canais/` | regras da fila de envio (atraso máximo, montagem das mensagens) |
 | `src/notificador/` | aviso de caso para o dono (resumo, sugestão, 3 opções) |
-| `src/agente/` | prompts do modelo e trava final de termos proibidos |
+| `src/agente/` | prompts do modelo, trava final de termos proibidos e comandos falados |
+| `src/sistema.mjs` | diferenças entre Windows e Linux (processo vivo, Python, Claude Code) |
 | `tools/instalar-servico.ps1` | tarefas agendadas `wa-leitor` e `wa-agente` |
 
 Os três processos ficam na raiz de `src/` e só orquestram; a lógica testável fica nas pastas.
@@ -106,6 +118,11 @@ Configuração do agente em `<dados>\agente.json` e do aviso em `<dados>\ausenci
 comentários de [`src/agente.mjs`](src/agente.mjs) e [`src/ausencia.mjs`](src/ausencia.mjs)).
 Variáveis opcionais em [`.env.example`](.env.example).
 
+### Em servidor (Linux + Docker)
+`docker compose up -d` com a imagem `ghcr.io/davi9411/zapdesk` (publicada pelo CI a cada push na
+`main`), leitor e agente no mesmo volume e limpeza automática de mídia. Passo a passo da migração do
+PC em [`docs/migracao.md`](docs/migracao.md).
+
 ## Uso pela linha de comando
 ```
 wa status                         # ligado/desligado + contagens
@@ -118,6 +135,7 @@ wa fila | wa cancelar <id>        # fila de envio
 wa ausencia                       # período, texto e quem já recebeu o aviso
 wa etiquetas                      # etiquetas e quem está em cada uma
 wa etiqueta <nome> <etiqueta> [--tirar]
+wa limpar --dias 7 [--max-gb 8] [--simular]   # apaga mídia antiga (texto e transcrições ficam)
 ```
 
 ## Testes
