@@ -395,7 +395,14 @@ async function tratarDavi(cfg, m) {
     try { r = await chamarClaude(promptRespostaDavi({ nome: cfg.nome, empresa: cfg.empresa, caso, conversa: textoConversa(cfg, caso.chat, 12), instrucao })); }
     catch (err) { avisarDavi(cfg, `Falha ao redigir a resposta do caso #${caso.id} (${err.message.slice(0, 100)}). Mande de novo em instantes.`); return; }
     // era uma pergunta para o agente sobre o caso: responde só ao dono e o caso continua aberto
-    if (r.para === 'equipe') { avisarDavi(cfg, `💬 *#${caso.id}* ${String(r.resposta_davi || 'Não sei responder com base na conversa.').trim()}`); return; }
+    if (r.para === 'equipe') {
+      // pergunta do dono ou ressalva do agente: nada vai ao cliente; com proposta, "#N ok" envia a proposta
+      const prop = String(r.sugestao_cliente || '').trim().slice(0, 1500);
+      if (prop) db.prepare("UPDATE agente_caso SET sugestao = ?, status = 'aberto' WHERE id = ?").run(prop, caso.id);
+      avisarDavi(cfg, `${prop ? '🤔' : '💬'} *#${caso.id}* ${String(r.resposta_davi || 'Não sei responder com base na conversa.').trim()}`
+        + (prop ? `\n\n💡 *Eu mandaria:* "${prop}"\n\n1️⃣ *#${caso.id} ok* → mando a minha proposta\n2️⃣ *#${caso.id} sua orientação* → ajusto e mando` : ''));
+      return;
+    }
     texto = String(r.mensagem_cliente || '').trim();
     if (!texto || /(claude|anthropic|openai|chatgpt|\bdavi\b)/i.test(texto)) { avisarDavi(cfg, `Não consegui redigir uma resposta segura para o caso #${caso.id}. Mande a orientação de outro jeito ou *#${caso.id} sexta*.`); return; }
   }

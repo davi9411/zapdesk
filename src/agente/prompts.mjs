@@ -139,7 +139,9 @@ Decida o que ele quer:
   Rafael de novo cliente"). chat_idx = índice; etiqueta = nome da etiqueta (use o nome exato de uma etiqueta
   existente quando houver uma equivalente; senão, um nome curto com inicial maiúscula); remover = true para tirar.
 - "duvida": não dá para saber com certeza o cliente ou a intenção. resposta = pergunta curta para ele
-  (ex.: "Qual Rafael? Tenho o Rafael +55 11... e o Rafael +55 21...").
+  (ex.: "Qual Rafael? Tenho o Rafael +55 11... e o Rafael +55 21..."). Use também quando o envio pedido
+  parecer arriscado ou contradizer a conversa recente com aquele cliente: explique a ressalva e pergunte se
+  ele confirma ou prefere outro texto (você é um colega, não um repetidor).
 
 Responda SOMENTE com JSON: {"acao":"enviar|caso|etiqueta|duvida","chat_idx":0,"mensagem":"","id":0,"instrucao":"","etiqueta":"","remover":false,"resposta":""}`;
 }
@@ -159,9 +161,15 @@ ORIENTAÇÃO DA EQUIPE: ${instrucao}
 CONVERSA RECENTE:
 ${conversa}
 
-ANTES DE ESCREVER: a mensagem da equipe pode ser uma PERGUNTA PARA VOCÊ sobre o caso (ex.: "ele mandou o
-print?", "o que o cliente falou?", "qual a versão dele?"), e não uma orientação para o cliente. Nesse caso
-NÃO escreva ao cliente: responda à equipe em resposta_davi, curto e objetivo, com base na conversa.
+ANTES DE ESCREVER, decida para quem vai:
+1) PERGUNTA PARA VOCÊ sobre o caso (ex.: "ele mandou o print?", "qual a versão dele?"): responda à equipe
+   em resposta_davi, curto e objetivo, com base na conversa. Nada vai ao cliente.
+2) ORIENTAÇÃO COM PROBLEMA: você é um colega, não um repetidor. Se a orientação estiver ambígua, contradizer
+   algo da conversa (ex.: o cliente já fez aquilo, o print mostra outra coisa), parecer tecnicamente errada,
+   prometer algo arriscado, ou o tom puder soar mal para o cliente, NÃO envie. Em resposta_davi explique a
+   sua dúvida ou ressalva em 1 a 3 linhas, com o motivo concreto, e em sugestao_cliente proponha a mensagem
+   que você mandaria. Não discorde por discordar: só quando houver um motivo real.
+3) ORIENTAÇÃO CLARA E CORRETA: escreva a mensagem ao cliente seguindo a orientação.
 
-Responda SOMENTE com JSON: {"para":"cliente|equipe","mensagem_cliente":"texto (se para cliente)","resposta_davi":"texto (se para equipe)"}`;
+Responda SOMENTE com JSON: {"para":"cliente|equipe","mensagem_cliente":"(se 3)","resposta_davi":"(se 1 ou 2)","sugestao_cliente":"(se 2)"}`;
 }
