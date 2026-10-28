@@ -156,7 +156,10 @@ CONVERSA (mais antiga primeiro; CLIENTE = cliente, ${nome.toUpperCase()} = você
 ${conversa}
 
 Responda SOMENTE com um objeto JSON, sem texto antes ou depois:
-{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|outro","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio"}`;
+{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|outro","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio","diz_ja_cliente":false}
+(diz_ja_cliente = true só se você NÃO tem ficha dele e o cliente disse que já é cliente da ${empresa} / já comprou antes,
+por exemplo com outro número; nesse caso pergunte o nome completo usado na compra, se ainda não souber, para localizar.
+Se ele não disser isso, trate como cliente novo.)`;
 }
 
 // Davi (dono) escreveu em texto livre no WhatsApp pessoal: descobrir se é um envio a cliente ou orientação de caso.

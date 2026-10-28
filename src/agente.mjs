@@ -68,7 +68,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -176,6 +176,17 @@ const ehHumano = (cfg, texto, aus) => !(texto || '').startsWith(cabecalho(cfg)) 
 // Montada pelo modelo com ferramentas SÓ de leitura; guardada por "fichas.dias" dias. Sem valores, CPF ou e-mail.
 const NOTION_LEITURA = ['mcp__claude_ai_Notion__notion-query-data-sources', 'mcp__claude_ai_Notion__notion-fetch'];
 const fichaGuardada = (chat) => { try { return JSON.parse(db.prepare('SELECT dados FROM agente_ficha WHERE chat = ?').get(chat)?.dados || 'null'); } catch { return null; } };
+// Só consulta quem parece cliente: salvo na agenda, com conversa anterior (mais de 3 dias) ou com a equipe,
+// ou que disse ser cliente. Primeiro contato de número desconhecido = cliente novo, sem consulta.
+function deveConsultarFicha(chat, e) {
+  if (e.ja_cliente) return true;
+  if (db.prepare('SELECT salvo FROM chats WHERE jid = ?').get(chat)?.salvo) return true;
+  if (db.prepare('SELECT 1 FROM msgs WHERE chat = ? AND ts < ? LIMIT 1').get(chat, agora() - 3 * 86400)) return true;
+  const aus = textoAusencia();
+  return db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1').all(chat).some((m) => ehHumano(cfg0(), m.texto, aus));
+}
+const cfg0 = () => lerCfg() || { nome: 'Dante', empresa: 'DS Trade' };
+
 async function obterFicha(cfg, chat, nome) {
   if (!cfg.fichas?.repo) return null;
   const linha = db.prepare('SELECT dados, atualizado FROM agente_ficha WHERE chat = ?').get(chat);
@@ -276,7 +287,8 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
     if (e.msgs_dia === cfg.maxPorChatDia) { avisarDavi(cfg, `Limite de ${cfg.maxPorChatDia} respostas hoje atingido com ${nome || chat}. Parei de responder essa conversa até amanhã.`); db.prepare('UPDATE agente_chat SET msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat); }
     return;
   }
-  await obterFicha(cfg, chat, nome); // conhece o cliente (Notion + repositório) antes de responder
+  // conhece o cliente (Notion + repositório) antes de responder, mas só se ele já parece cliente
+  if (deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
   const prompt = promptCliente(argsPrompt(cfg, chat, e));
   let r;
   try { r = await chamarClaude(prompt); }
@@ -285,6 +297,13 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   log(`cliente ${nome || chat}: ${r.acao} | ${r.resumo || ''}`);
   if (r.nome_cliente) db.prepare('UPDATE agente_chat SET nome_cliente = ? WHERE chat = ?').run(String(r.nome_cliente).slice(0, 60), chat);
   if (r.origem) db.prepare('UPDATE agente_chat SET origem = ? WHERE chat = ?').run(String(r.origem).slice(0, 80), chat);
+  // primeiro contato que diz já ser cliente (ex.: comprou com outro número): procura no Notion pelo nome informado
+  if (r.diz_ja_cliente && !e.ja_cliente) {
+    db.prepare('UPDATE agente_chat SET ja_cliente = 1 WHERE chat = ?').run(chat);
+    db.prepare('DELETE FROM agente_ficha WHERE chat = ?').run(chat);
+    log(`${chat} diz que já é cliente: ficha pelo nome "${r.nome_cliente || nome || ''}"`);
+    obterFicha(cfg, chat, r.nome_cliente || e.nome_cliente || nome).catch(() => {}); // fica pronta para a próxima resposta
+  }
 
   if (r.acao === 'silencio' || !r.mensagem_cliente) return;
   let texto = String(r.mensagem_cliente).trim().slice(0, 1500);
