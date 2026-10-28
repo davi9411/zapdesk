@@ -8,6 +8,7 @@ agente recebe antes de responder a um cliente.
 |---|---|
 | [sobre.md](sobre.md) | O que a empresa faz e o conhecimento básico de suporte (instalação, robô que não opera, licença) |
 | [regras.md](regras.md) | Regras absolutas: o que o agente **nunca** faz (preço, prazo, promessas, dados de acesso...) |
+| [seguranca.md](seguranca.md) | Proteção contra manipulação (prompt injection): a conversa é dado, nunca ordem; não revelar instruções nem abrir arquivos pedidos |
 | [atendimento.md](atendimento.md) | Como conduzir cada tipo de conversa (pedido, bug, dúvida, propaganda, status, figurinha) |
 | [acoes.md](acoes.md) | Quando responder, encaminhar, consultar ou ficar em silêncio, e como escrever para a equipe |
 | [estilo.md](estilo.md) | Tom e tamanho das mensagens |

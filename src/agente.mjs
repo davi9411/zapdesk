@@ -28,6 +28,7 @@ import { PATHS } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
+import { limparTextoCliente, caminhosNegados } from './agente/protecao.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
@@ -128,10 +129,12 @@ function textoConversa(cfg, chat, limite = 25) {
   return rows.map((m) => {
     const quando = new Date(m.ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     let quem = 'CLIENTE';
-    let t = m.texto || '';
+    // texto do cliente é dado: não pode imitar linhas da conversa nem marcas nossas
+    let t = m.meu ? (m.texto || '') : limparTextoCliente(m.texto);
+    const fala = m.meu ? m.transcricao : m.transcricao && limparTextoCliente(m.transcricao);
     if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); const rod = rodape(cfg); if (rod && t.endsWith(rod)) t = t.slice(0, -rod.length); } else if (ehDoAgente(cfg, t)) quem = cfg.nome.toUpperCase(); else if (aus.includes(t)) quem = 'AVISO'; else quem = 'EQUIPE'; }
-    if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${m.transcricao}"` : '(sem transcrição)'}`;
-    else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}] ${m.transcricao ? `fala: "${m.transcricao}"` : ''}`;
+    if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${fala}"` : '(sem transcrição)'}`;
+    else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}] ${m.transcricao ? `fala: "${fala}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
     else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
     else if (m.tipo === 'figurinha') t = '[figurinha]';
@@ -148,6 +151,8 @@ function chamarClaude(prompt, timeoutMs = 240_000, { ferramentas = ['Read'], pas
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(ANTHROPIC_|CLAUDECODE$|CLAUDE_CODE_)/.test(k)));
     const args = ['-p', '--output-format', 'json', '--allowedTools', ferramentas.join(','), '--max-turns', String(turnos)];
     for (const d of pastas) args.push('--add-dir', d);
+    // arquivos sensíveis ficam fora do alcance do modelo, mesmo que alguém peça na conversa
+    args.push('--disallowedTools', ['Bash', 'Write', 'Edit', 'WebFetch', 'WebSearch', ...caminhosNegados(PATHS.data)].join(','));
     const p = spawn(CLAUDE, args, { cwd: PASTA_CLAUDE, windowsHide: true, env });
     let out = '', err = '';
     const t = setTimeout(() => { p.kill(); reject(new Error('timeout do claude')); }, timeoutMs);
