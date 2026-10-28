@@ -16,7 +16,8 @@
 // O Davi também pode mandar texto livre ("manda pro Fulano que...") e o agente confirma antes de enviar.
 //
 // Comandos do Davi (do WhatsApp pessoal para este número): PAUSAR, RETOMAR, STATUS,
-// "#N resposta" (responde o caso N) e "#N sexta" (deixa para sexta).
+// "#N orientação" / "#N ok" / "#N depois", "REGRA: texto" / "REGRAS" / "REGRA- N" (regras ensinadas)
+// e texto livre ("manda pro Fulano que...", "marca a Fulana como pessoal").
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -192,7 +193,7 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
   const teveHumano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts > ?').all(chat, agora() - 3 * 86400).some((m) => ehHumano(cfg, m.texto, aus));
   // há quanto tempo a mensagem mais antiga ainda não respondida espera (retomada depois de ficar fora do ar)
   const pendente = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').get(chat, e.ultimo_ts || 0).t;
-  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado,
+  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(),
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
@@ -326,6 +327,11 @@ async function interpretarDavi(cfg, texto) {
   avisarDavi(cfg, r.resposta || 'Não entendi. Diga para qual cliente e o que mandar, ou use *#N orientação*. Comandos: STATUS, PAUSAR, RETOMAR.');
 }
 
+// ---------- regras ensinadas pelo dono (ficam na pasta de dados, entram em todo prompt de atendimento) ----------
+const ARQ_REGRAS = join(PATHS.data, 'agente-regras.json');
+function lerRegras() { try { return JSON.parse(readFileSync(ARQ_REGRAS, 'utf8')); } catch { return []; } }
+function gravarRegras(r) { writeFileSync(ARQ_REGRAS, JSON.stringify(r, null, 2)); }
+
 // ---------- mensagens do Davi (comandos e orientações) ----------
 async function tratarDavi(cfg, m) {
   const t = (m.texto || '').trim();
@@ -336,6 +342,23 @@ async function tratarDavi(cfg, m) {
     const abertos = db.prepare("SELECT id, nome, resumo FROM agente_caso WHERE status = 'aberto' ORDER BY id").all();
     const hojeN = db.prepare('SELECT COUNT(*) n FROM agente_chat WHERE dia = ? AND msgs_dia > 0').get(hoje()).n;
     avisarDavi(cfg, `${kv.get('pausado') === '1' ? '⏸️ PAUSADO' : '▶️ Ativo'} | conversas atendidas hoje: ${hojeN}\nCasos abertos: ${abertos.length ? abertos.map((c) => `\n#${c.id} ${c.nome || ''}: ${c.resumo}`).join('') : 'nenhum'}`);
+    return;
+  }
+  // regras ensinadas pelo dono: "REGRA: texto" acrescenta, "REGRAS" lista, "REGRA- 3" apaga a 3
+  const mr = t.match(/^REGRA\s*[:\-–]\s*([\s\S]+)$/i);
+  if (mr && !/^\d+$/.test(mr[1].trim())) {
+    const regras = [...lerRegras(), mr[1].trim()];
+    gravarRegras(regras);
+    avisarDavi(cfg, `📚 Regra ${regras.length} anotada. Vale a partir da próxima resposta.\n"${mr[1].trim()}"`);
+    return;
+  }
+  if (T === 'REGRAS') { const r = lerRegras(); avisarDavi(cfg, r.length ? `📚 Regras que você me ensinou:\n${r.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nPara apagar: *REGRA- N*` : 'Nenhuma regra ensinada ainda. Mande *REGRA: texto*.'); return; }
+  const md = t.match(/^REGRA\s*-\s*(\d+)$/i);
+  if (md) {
+    const r = lerRegras(); const i = Number(md[1]) - 1;
+    if (!r[i]) { avisarDavi(cfg, `Não existe a regra ${md[1]}.`); return; }
+    const [fora] = r.splice(i, 1); gravarRegras(r);
+    avisarDavi(cfg, `🗑️ Apaguei a regra ${md[1]}: "${fora}"`);
     return;
   }
   // envio pedido em texto livre aguardando confirmação
