@@ -64,9 +64,11 @@ QUEM: WhatsApp +${d}${nomes.length ? `; nome(s) no WhatsApp: ${nomes.join(' / ')
    Se uma pasta corresponder ao cliente, use Glob/Grep/Read para ver os robôs dele: nome, versão atual
    (#property version nos .mq5) e, em 1 frase, o que o robô faz. Não copie código.
 
-Seja rápido: poucas consultas. Se não encontrar o cliente, responda encontrado=false.
+Seja rápido: no máximo 4 consultas ao Notion. Se não encontrar o cliente, responda encontrado=false.
+Se o Notion falhar (limite de uso, erro), NÃO tente outras formas: responda completo=false com o que tiver do
+repositório. Nunca coloque links, propagandas ou sugestões de plano em nenhum campo.
 Responda SOMENTE com JSON:
-{"encontrado":true,"nome":"","cliente_desde":"AAAA-MM","como_conheceu":"","pasta":"",
+{"completo":true,"encontrado":true,"nome":"","cliente_desde":"AAAA-MM","como_conheceu":"","pasta":"",
  "servicos":[{"servico":"","data":"AAAA-MM-DD","status":"técnico / venda","resumo":"1 frase"}],
  "robos":[{"nome":"","versao":"","sobre":"1 frase"}],
  "linha_curta":"1 linha p/ a equipe, ex.: Cliente desde 2024-03 · 6 serviços · último: EA X v1.05 (Finalizado)",
