@@ -30,6 +30,7 @@ import { criarTrava } from './agente/travas.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
+import { comandoFalado } from './agente/voz.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -486,6 +487,13 @@ async function ciclo() {
     const marcadas = cfg.daviJids.map(() => '?').join(',');
     for (const m of db.prepare(`SELECT * FROM msgs WHERE chat IN (${marcadas}) AND meu = 0 AND ts > ? ORDER BY ts`).all(...cfg.daviJids, ultDavi)) {
       kv.set('ult_davi', m.ts);
+      if (m.tipo === 'audio') {
+        // áudio do dono: transcreve e trata como se ele tivesse digitado ("hashtag seis, ..." -> "#6 ...")
+        if (!m.transcricao) { prepararMidia(m.chat, m.ts - 1); m.transcricao = db.prepare('SELECT transcricao FROM msgs WHERE chat = ? AND id = ?').get(m.chat, m.id)?.transcricao; }
+        if (!m.transcricao || m.transcricao.startsWith('(sem fala')) { avisarDavi(cfg, '🎙️ Não consegui transcrever esse áudio. Pode mandar de novo ou por texto?'); continue; }
+        m.texto = comandoFalado(m.transcricao);
+        avisarDavi(cfg, `🎙️ Entendi: "${m.texto}"`);
+      }
       await tratarDavi(cfg, m);
     }
     fecharAssumidos(cfg);
