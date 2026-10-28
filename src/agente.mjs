@@ -179,7 +179,9 @@ const fichaGuardada = (chat) => { try { return JSON.parse(db.prepare('SELECT dad
 async function obterFicha(cfg, chat, nome) {
   if (!cfg.fichas?.repo) return null;
   const linha = db.prepare('SELECT dados, atualizado FROM agente_ficha WHERE chat = ?').get(chat);
-  if (linha && agora() - linha.atualizado < (cfg.fichas.dias ?? 3) * 86400) return fichaGuardada(chat);
+  // ficha incompleta (Notion no limite de uso) vale só 2 h; completa vale "fichas.dias"
+  const incompleta = (() => { try { return JSON.parse(linha?.dados || '{}').completo === false; } catch { return false; } })();
+  if (linha && agora() - linha.atualizado < (incompleta ? 7200 : (cfg.fichas.dias ?? 3) * 86400)) return fichaGuardada(chat);
   let pastas = [];
   try { pastas = readdirSync(cfg.fichas.repo, { withFileTypes: true }).filter((d) => d.isDirectory() && !/^(aa|zz|\.)/.test(d.name)).map((d) => d.name); } catch {}
   const e = estadoChat(chat);
