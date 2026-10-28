@@ -70,5 +70,7 @@ export function abrirDb() {
   `);
   // contato salvo na agenda do celular (nome vindo da agenda, não só o nome do perfil)
   try { db.exec('ALTER TABLE chats ADD COLUMN salvo INTEGER DEFAULT 0'); } catch {}
+  // mensagem que é resposta/reação a um status nosso (não é um atendimento)
+  try { db.exec('ALTER TABLE msgs ADD COLUMN status_resp INTEGER DEFAULT 0'); } catch {}
   return db;
 }

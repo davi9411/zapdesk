@@ -57,3 +57,14 @@ test('prompt de comando do dono lista etiquetas e ações', () => {
   assert.match(p, /Pessoal🏠/);
   assert.match(p, /"acao":"enviar\|caso\|etiqueta\|duvida"/);
 });
+
+test('prompt do cliente: propaganda, pasta do robô e perfil', () => {
+  const base = { nome: 'Dante', empresa: 'Empresa X', conversa: '[x] CLIENTE: oi', casosAbertos: '', agoraTxt: 'agora' };
+  const p = promptCliente(base);
+  assert.match(p, /categoria="propaganda"/);
+  assert.match(p, /Estou obtendo essa informação/);
+  assert.doesNotMatch(p, /verificando essas informações no sistema/);
+  assert.doesNotMatch(p, /PERFIL DO CLIENTE/);
+  assert.match(promptCliente({ ...base, pastaRobo: 'C:/repo/Fulano' }), /C:\/repo\/Fulano[\s\S]*nome EXATO do campo/);
+  assert.match(promptCliente({ ...base, perfil: 'iniciante', estilo: 'mensagens curtas' }), /PERFIL DO CLIENTE[\s\S]*um passo de cada vez[\s\S]*mensagens curtas/);
+});

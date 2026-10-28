@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './regras/ausencia.mjs';
-import { classificar, jidChat, extensao } from './conector/mensagens.mjs';
+import { classificar, jidChat, extensao, respondeStatus } from './conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from './canais/fila.mjs';
 import { processoVivo } from './sistema.mjs';
 import { limparMidia } from './regras/limpeza.mjs';
@@ -54,7 +54,7 @@ const upChat = db.prepare(`INSERT INTO chats (jid, nome, grupo, ultima_ts) VALUE
   ON CONFLICT(jid) DO UPDATE SET nome = COALESCE(excluded.nome, nome), ultima_ts = MAX(ultima_ts, excluded.ultima_ts)`);
 const setNome = db.prepare(`UPDATE chats SET nome = ? WHERE jid = ?`);
 const getChat = db.prepare(`SELECT nome FROM chats WHERE jid = ?`);
-const insMsg = db.prepare(`INSERT OR IGNORE INTO msgs (chat, id, ts, meu, de, tipo, texto, arquivo, mime, dur) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+const insMsg = db.prepare(`INSERT OR IGNORE INTO msgs (chat, id, ts, meu, de, tipo, texto, arquivo, mime, dur, status_resp) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
 const jaTem = db.prepare(`SELECT 1 FROM msgs WHERE chat = ? AND id = ?`);
 
 function desembrulhar(m) {
@@ -148,8 +148,9 @@ async function salvar(msg, { baixar }) {
     }
   }
   const de = key.fromMe ? 'eu' : (msg.pushName || key.participantAlt || key.participant || jid);
-  insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null);
-  return { jid, grupo, ts, meu: !!key.fromMe, nome: nome || msg.pushName || null };
+  const status = respondeStatus(conteudo) ? 1 : 0;
+  insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null, status);
+  return { jid, grupo, ts, meu: !!key.fromMe, nome: nome || msg.pushName || null, status };
 }
 
 // ---------- mensagem de ausência (só mensagens ao vivo, 1 aviso por chat por período) ----------
@@ -157,6 +158,7 @@ const registrarAusencia = criarRegistro(db);
 function verificarAusencia(nova) {
   const a = lerAusencia();
   const meuNumero = (sock?.user?.id || '').split(':')[0].split('@')[0];
+  if (nova.status) return; // reação/resposta a um status nosso não é atendimento
   if (!deveResponder(a, { ...nova, meuNumero })) return;
   // conversa com a etiqueta pessoal ou alguma de "etiquetasIgnorar" não recebe o aviso
   const fora = [a.etiquetaPessoal || 'Pessoal', ...(a.etiquetasIgnorar || [])].map(normEtiqueta);

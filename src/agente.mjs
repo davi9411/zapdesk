@@ -68,7 +68,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -86,7 +86,7 @@ function lerCfg() {
     let desdeLiberado = ini;
     if (c.somenteAte && Date.now() > Date.parse(c.somenteAte)) { c.somente = []; desdeLiberado = Math.max(ini, Date.parse(c.somenteAte)); }
     return { nome: 'Dante', empresa: 'DS Trade', maxPorChatDia: 12, humanoHoras: 12, semRespostaMin: 15, lembrarCasoMin: 60, alertaHoras: [8, 22],
-      etiquetaPessoal: 'Pessoal🏠', etiquetaLead: 'Novo cliente🆕', ...c, ini, fim, desdeLiberado, davi: String(c.davi).replace(/\D/g, ''),
+      etiquetaPessoal: 'Pessoal🏠', etiquetaLead: 'Novo cliente🆕', etiquetasPerfil: { iniciante: 'Iniciante2⃣', experiente: 'Experiente1⃣' }, ...c, ini, fim, desdeLiberado, davi: String(c.davi).replace(/\D/g, ''),
       daviJids: [`${String(c.davi).replace(/\D/g, '')}@s.whatsapp.net`, ...(c.daviJids || [])], somente: dig(c.somente), excluir: dig(c.excluir) };
   } catch { return null; }
 }
@@ -135,6 +135,7 @@ function textoConversa(cfg, chat, limite = 25) {
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
     else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
     else if (m.tipo === 'figurinha') t = '[figurinha]';
+    if (m.status_resp) t = `[resposta a um status nosso] ${t}`;
     return `[${quando}] ${quem}: ${t}`;
   }).join('\n');
 }
@@ -183,6 +184,13 @@ const ehHumano = (cfg, texto, aus) => !ehDoAgente(cfg, texto) && !aus.includes(t
 // ---------- ficha do cliente (Notion + pasta do robô no repositório) ----------
 // Montada pelo modelo com ferramentas SÓ de leitura; guardada por "fichas.dias" dias. Sem valores, CPF ou e-mail.
 const NOTION_LEITURA = ['mcp__claude_ai_Notion__notion-query-data-sources', 'mcp__claude_ai_Notion__notion-fetch'];
+// pasta dos robôs do cliente no repositório (da ficha), para o agente conferir parâmetros exatos
+function pastaRobo(cfg, chat) {
+  const p = fichaGuardada(chat)?.pasta;
+  if (!p || !cfg.fichas?.repo) return null;
+  const caminho = join(cfg.fichas.repo, String(p).replace(/^[\\/]+/, ''));
+  return existsSync(caminho) ? caminho : null;
+}
 const fichaGuardada = (chat) => { try { return JSON.parse(db.prepare('SELECT dados FROM agente_ficha WHERE chat = ?').get(chat)?.dados || 'null'); } catch { return null; } };
 // Só consulta quem parece cliente: salvo na agenda, com conversa anterior (mais de 3 dias) ou com a equipe,
 // ou que disse ser cliente. Primeiro contato de número desconhecido = cliente novo, sem consulta.
@@ -230,6 +238,13 @@ function novoCaso(chat, nome, tipo, resumo, pergunta, sugestao = null) {
     .run(chat, nome, resumo || '', pergunta || '', agora(), tipo, sugestao).lastInsertRowid);
 }
 
+// perfil técnico: etiqueta posta pela equipe vale mais que a classificação do agente
+function perfilDo(cfg, chat, e) {
+  const ets = etiquetasDo(chat).map(normEtiqueta);
+  for (const [p, et] of Object.entries(cfg.etiquetasPerfil || {})) if (ets.includes(normEtiqueta(et))) return p;
+  return e.perfil || null;
+}
+
 // contexto comum do prompt do cliente
 function argsPrompt(cfg, chat, e, sugestao = false) {
   prepararMidia(chat, Math.floor(cfg.ini / 1000) - 3600);
@@ -248,6 +263,8 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     // quando uma pessoa da equipe atende (para o cliente escolher entre o agente e a equipe)
     retornoEquipe: cfg.horario ? (aberto(cfg.horario) ? 'ainda hoje, no horário de atendimento' : textoRetorno(cfg.horario)) : null,
     escolhaFeita: !!(e.escolha || e.apresentado),
+    pastaRobo: pastaRobo(cfg, chat),
+    perfil: perfilDo(cfg, chat, e), estilo: e.estilo,
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
 }
 
@@ -290,6 +307,22 @@ function fecharAssumidos(cfg) {
   }
 }
 
+// perfil técnico e estilo do cliente, observados pelo agente; o perfil vira etiqueta no WhatsApp
+function guardarPerfil(cfg, chat, e, r) {
+  const estilo = String(r.estilo_cliente || '').trim().slice(0, 200);
+  if (estilo && estilo !== e.estilo) db.prepare('UPDATE agente_chat SET estilo = ? WHERE chat = ?').run(estilo, chat);
+  const p = String(r.perfil_cliente || '').toLowerCase();
+  const mapa = cfg.etiquetasPerfil || {};
+  if (!mapa[p] || p === e.perfil) return;
+  const ets = etiquetasDo(chat).map(normEtiqueta);
+  // a equipe já etiquetou o perfil à mão: respeita
+  if (Object.values(mapa).some((et) => ets.includes(normEtiqueta(et)) && !(e.perfil && normEtiqueta(mapa[e.perfil]) === normEtiqueta(et)))) return;
+  db.prepare('UPDATE agente_chat SET perfil = ? WHERE chat = ?').run(p, chat);
+  if (e.perfil && mapa[e.perfil]) pedirEtiqueta(chat, mapa[e.perfil], true);
+  pedirEtiqueta(chat, mapa[p]);
+  log(`perfil ${chat}: ${p} (etiqueta "${mapa[p]}")`);
+}
+
 // ---------- atendimento de um cliente ----------
 async function atenderCliente(cfg, chat, nome, ateTs) {
   const e = estadoChat(chat);
@@ -302,7 +335,7 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
   const prompt = promptCliente(argsPrompt(cfg, chat, e));
   let r;
-  try { r = await chamarClaude(prompt); }
+  try { r = await chamarClaude(prompt, 240_000, pastaRobo(cfg, chat) ? { ferramentas: ['Read', 'Glob', 'Grep'], pastas: [pastaRobo(cfg, chat)], turnos: 10 } : undefined); }
   catch (err) { log(`ERRO claude ${chat}: ${err.message}`); falhou(cfg, err.message); return; } // não marca como lido: tenta de novo no próximo ciclo
   db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(ateTs, chat);
   log(`cliente ${nome || chat}: ${r.acao} | ${r.resumo || ''}`);
@@ -322,33 +355,40 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
     obterFicha(cfg, chat, r.nome_cliente || e.nome_cliente || nome).catch(() => {}); // fica pronta para a próxima resposta
   }
 
-  if (r.acao === 'silencio' || !r.mensagem_cliente) return;
+  guardarPerfil(cfg, chat, e, r);
+  const propaganda = r.categoria === 'propaganda';
+  if (r.acao === 'silencio') return;
+  // sem mensagem ao cliente (ex.: propaganda): só avisa a equipe
+  if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') avisarCaso(cfg, chat, nome, e, r, r.acao); return; }
   let texto = String(r.mensagem_cliente).trim().slice(0, 1500);
   if (texto.length > 600) log(`resposta longa (${texto.length} caracteres) para ${chat}`);
   let acao = r.acao;
-  if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou verificando essas informações aqui no sistema e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
+  if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou obtendo essa informação e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
   enfileirar(chat, nome, paraCliente(cfg, texto));
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
-  if (!e.etiquetado && cfg.etiquetaLead) {
+  if (!e.etiquetado && cfg.etiquetaLead && !propaganda) {
     db.prepare('UPDATE agente_chat SET etiquetado = 1 WHERE chat = ?').run(chat);
     const salvo = db.prepare('SELECT salvo FROM chats WHERE jid = ?').get(chat)?.salvo;
     const primeira = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ?').get(chat).t || agora();
     if (!salvo && !etiquetasDo(chat).length && primeira > agora() - 3 * 86400) { pedirEtiqueta(chat, cfg.etiquetaLead); log(`lead: etiqueta "${cfg.etiquetaLead}" em ${chat}`); }
   }
 
-  if (acao === 'consultar' || acao === 'encaminhar') {
-    // já existe caso aberto desse cliente? atualiza o mesmo número em vez de abrir outro
-    const aberto = db.prepare("SELECT id FROM agente_caso WHERE chat = ? AND status = 'aberto' AND tipo != 'sugestao' ORDER BY id DESC LIMIT 1").get(chat);
-    const sug = String(r.sugestao_davi || '').trim().slice(0, 1500) || null;
-    const id = aberto ? aberto.id : novoCaso(chat, nome, acao, r.resumo, r.pergunta_davi, sug);
-    if (aberto) db.prepare('UPDATE agente_caso SET resumo = ?, pergunta = ?, tipo = ?, sugestao = ?, lembrado = 0 WHERE id = ?').run(r.resumo || '', r.pergunta_davi || '', acao, sug, id);
-    const quem = `${r.nome_cliente || e.nome_cliente || nome || 'cliente'} (${numeroDe(chat)})`;
-    const enc = acao === 'encaminhar';
-    avisarDavi(cfg, cartao({ id, icone: aberto ? '🔄' : enc ? '📨' : '📋', titulo: `${aberto ? 'atualização · ' : ''}${r.categoria || 'atendimento'}`, quem,
-      origem: aberto ? null : r.origem || e.origem, resumo: r.resumo_davi || r.resumo, decidir: enc ? null : r.pergunta_davi, sugestao: sug,
-      ficha: aberto ? null : fichaGuardada(chat) })
-      + (enc ? '\n\nOu siga direto na conversa (eu paro de responder quando você escrever).' : ''));
-  }
+  if (acao === 'consultar' || acao === 'encaminhar') avisarCaso(cfg, chat, nome, e, r, acao);
+}
+
+// abre (ou atualiza) o caso e manda o cartão ao Davi
+function avisarCaso(cfg, chat, nome, e, r, acao) {
+  // já existe caso aberto desse cliente? atualiza o mesmo número em vez de abrir outro
+  const aberto = db.prepare("SELECT id FROM agente_caso WHERE chat = ? AND status = 'aberto' AND tipo != 'sugestao' ORDER BY id DESC LIMIT 1").get(chat);
+  const sug = String(r.sugestao_davi || '').trim().slice(0, 1500) || null;
+  const id = aberto ? aberto.id : novoCaso(chat, nome, acao, r.resumo, r.pergunta_davi, sug);
+  if (aberto) db.prepare('UPDATE agente_caso SET resumo = ?, pergunta = ?, tipo = ?, sugestao = ?, lembrado = 0 WHERE id = ?').run(r.resumo || '', r.pergunta_davi || '', acao, sug, id);
+  const quem = `${r.nome_cliente || e.nome_cliente || nome || 'cliente'} (${numeroDe(chat)})`;
+  const enc = acao === 'encaminhar';
+  avisarDavi(cfg, cartao({ id, icone: aberto ? '🔄' : enc ? '📨' : '📋', titulo: `${aberto ? 'atualização · ' : ''}${r.categoria || 'atendimento'}`, quem,
+    origem: aberto ? null : r.origem || e.origem, resumo: r.resumo_davi || r.resumo, decidir: enc ? null : r.pergunta_davi, sugestao: sug,
+    ficha: aberto ? null : fichaGuardada(chat) })
+    + (enc ? '\n\nOu siga direto na conversa (eu paro de responder quando você escrever).' : ''));
 }
 
 let ultimaFalha = 0;
@@ -591,6 +631,13 @@ async function ciclo() {
       }
       const e = estadoChat(c.chat);
       if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
+      // só figurinha ou só reação/resposta a um status nosso desde a última leitura: não é atendimento
+      const novas = db.prepare('SELECT tipo, status_resp FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.ultimo_ts || 0);
+      if (novas.length && novas.every((m) => m.status_resp || m.tipo === 'figurinha')) {
+        db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
+        log(`${c.chat}: só figurinha/status, sem resposta`);
+        continue;
+      }
       const aus = textoAusencia();
       // a última mensagem da conversa já é uma resposta da equipe: nada a fazer
       const ultima = db.prepare('SELECT meu, texto FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(c.chat);

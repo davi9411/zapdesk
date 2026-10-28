@@ -24,6 +24,12 @@ export function classificar(m) {
   return null; // reações, protocolo etc. são ignorados
 }
 
+// mensagem que responde/reage a um status nosso (o WhatsApp cita o status com remoteJid "status@broadcast")
+export function respondeStatus(m) {
+  if (!m) return false;
+  return Object.values(m).some((v) => v && typeof v === 'object' && v.contextInfo?.remoteJid === 'status@broadcast');
+}
+
 // Prefere o número (@s.whatsapp.net) ao LID quando o protocolo informa os dois.
 export function jidChat(key) {
   const a = key?.remoteJid || '';

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classificar, jidChat, extensao } from '../src/conector/mensagens.mjs';
+import { classificar, jidChat, extensao, respondeStatus } from '../src/conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from '../src/canais/fila.mjs';
 import { parseQuando } from '../src/regras/quando.mjs';
 import { cartao } from '../src/notificador/cartao.mjs';
@@ -63,4 +63,12 @@ test('cartão do caso: com e sem sugestão', () => {
   assert.match(com, /\*#7 · Lu/); assert.match(com, /❓ valor/); assert.match(com, /1️⃣ \*#7 ok\*/); assert.match(com, /3️⃣ \*#7 depois\*/);
   const sem = cartao({ id: 8, icone: '⏰', quem: 'X', resumo: 'r' });
   assert.doesNotMatch(sem, /#8 ok/); assert.match(sem, /1️⃣ \*#8 sua orientação\*/); assert.match(sem, /2️⃣ \*#8 depois\*/);
+});
+
+test('resposta a status é reconhecida', () => {
+  assert.equal(respondeStatus({ stickerMessage: { contextInfo: { remoteJid: 'status@broadcast' } } }), true);
+  assert.equal(respondeStatus({ extendedTextMessage: { text: 'top', contextInfo: { remoteJid: 'status@broadcast' } } }), true);
+  assert.equal(respondeStatus({ stickerMessage: {} }), false);
+  assert.equal(respondeStatus({ conversation: 'oi' }), false);
+  assert.equal(respondeStatus(null), false);
 });
