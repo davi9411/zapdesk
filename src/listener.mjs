@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './regras/ausencia.mjs';
-import { classificar, jidChat, extensao, respondeStatus } from './conector/mensagens.mjs';
+import { classificar, jidChat, extensao, statusCitado } from './conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from './canais/fila.mjs';
 import { processoVivo } from './sistema.mjs';
 import { limparMidia } from './regras/limpeza.mjs';
@@ -34,6 +34,16 @@ const sair = (cod = 0) => {
   process.exit(cod);
 };
 process.on('SIGTERM', () => sair(0));
+// reinício sem precisar de administrador: quem cria <dados>/reiniciar-leitor faz o leitor sair;
+// a tarefa agendada (ou o vigia do agente) sobe de novo em ~1 min com o programa atualizado
+const ARQ_REINICIAR = join(PATHS.data, 'reiniciar-leitor');
+try { unlinkSync(ARQ_REINICIAR); } catch {}
+setInterval(() => {
+  if (!existsSync(ARQ_REINICIAR)) return;
+  try { unlinkSync(ARQ_REINICIAR); } catch {}
+  log('reinício pedido (reiniciar-leitor)');
+  sair(0);
+}, 10_000);
 process.on('SIGINT', () => sair(0));
 const autoOffMin = Number(process.env.WA_AUTO_OFF_MIN || 0);
 const pendentesFila = db.prepare(`SELECT COUNT(*) n FROM outbox WHERE status IN ('pendente','enviando')`);
@@ -54,7 +64,7 @@ const upChat = db.prepare(`INSERT INTO chats (jid, nome, grupo, ultima_ts) VALUE
   ON CONFLICT(jid) DO UPDATE SET nome = COALESCE(excluded.nome, nome), ultima_ts = MAX(ultima_ts, excluded.ultima_ts)`);
 const setNome = db.prepare(`UPDATE chats SET nome = ? WHERE jid = ?`);
 const getChat = db.prepare(`SELECT nome FROM chats WHERE jid = ?`);
-const insMsg = db.prepare(`INSERT OR IGNORE INTO msgs (chat, id, ts, meu, de, tipo, texto, arquivo, mime, dur, status_resp) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+const insMsg = db.prepare(`INSERT OR IGNORE INTO msgs (chat, id, ts, meu, de, tipo, texto, arquivo, mime, dur, status_resp, status_texto) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
 const jaTem = db.prepare(`SELECT 1 FROM msgs WHERE chat = ? AND id = ?`);
 
 function desembrulhar(m) {
@@ -148,8 +158,9 @@ async function salvar(msg, { baixar }) {
     }
   }
   const de = key.fromMe ? 'eu' : (msg.pushName || key.participantAlt || key.participant || jid);
-  const status = respondeStatus(conteudo) ? 1 : 0;
-  insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null, status);
+  const citado = statusCitado(conteudo);
+  const status = citado !== null ? 1 : 0;
+  insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null, status, citado);
   return { jid, grupo, ts, meu: !!key.fromMe, nome: nome || msg.pushName || null, status };
 }
 

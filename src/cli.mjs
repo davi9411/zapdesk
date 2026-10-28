@@ -267,7 +267,13 @@ function parear() {
   process.exit(r.status ?? 1);
 }
 
-const CMDS = { ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar };
+// pede ao leitor para reiniciar (sem admin): ele sai e a tarefa/vigia sobe de novo com o programa atualizado
+function reiniciar() {
+  writeFileSync(join(PATHS.data, 'reiniciar-leitor'), String(Date.now()));
+  console.log('Pedido de reinício enviado: o leitor sai em até 10 s e volta em ~1 min.');
+}
+
+const CMDS = { reiniciar, ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 

@@ -68,3 +68,14 @@ test('prompt do cliente: propaganda, pasta do robô e perfil', () => {
   assert.match(promptCliente({ ...base, pastaRobo: 'C:/repo/Fulano' }), /C:\/repo\/Fulano[\s\S]*nome EXATO do campo/);
   assert.match(promptCliente({ ...base, perfil: 'iniciante', estilo: 'mensagens curtas' }), /PERFIL DO CLIENTE[\s\S]*um passo de cada vez[\s\S]*mensagens curtas/);
 });
+
+test('persona: arquivos editáveis entram no prompt com nome e empresa', async () => {
+  const { persona } = await import('../src/agente/prompts.mjs');
+  for (const arq of ['sobre', 'regras', 'atendimento', 'acoes', 'estilo', 'aprendidas']) assert.ok(persona(arq, { nome: 'Dante', empresa: 'X' }).length > 50, arq);
+  const r = persona('regras', { nome: 'Dante', empresa: 'Empresa X' });
+  assert.match(r, /^REGRAS ABSOLUTAS/);
+  assert.match(r, /Você é Dante, da Empresa X/);
+  assert.doesNotMatch(r, /\{nome\}|\{empresa\}/);
+  assert.doesNotMatch(persona('aprendidas'), /<!--/);
+  assert.equal(persona('nao-existe'), '');
+});

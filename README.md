@@ -67,7 +67,11 @@ cliente escreve ──► agente responde (coleta) ──► caso claro ou decis
   (Healthchecks.io) para avisar por e-mail se a máquina parar.
 
 O modelo é chamado pelo `claude -p` do Claude Code (assinatura, não API), uma chamada por resposta,
-com o prompt em [`src/agente/prompts.mjs`](src/agente/prompts.mjs).
+com o prompt montado em [`src/agente/prompts.mjs`](src/agente/prompts.mjs).
+
+**Como o agente pensa fica na pasta [`persona/`](persona/)**: regras absolutas, diretrizes de atendimento,
+ações, estilo e regras aprendidas, em Markdown editável (sem mexer no código). O agente relê os arquivos
+a cada atendimento.
 
 ## Arquitetura
 ```

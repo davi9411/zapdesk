@@ -135,7 +135,7 @@ function textoConversa(cfg, chat, limite = 25) {
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
     else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
     else if (m.tipo === 'figurinha') t = '[figurinha]';
-    if (m.status_resp) t = `[resposta a um status nosso] ${t}`;
+    if (m.status_resp) t = `[resposta ao nosso status: "${m.status_texto || '?'}"] ${t}`;
     return `[${quando}] ${quem}: ${t}`;
   }).join('\n');
 }
@@ -632,10 +632,11 @@ async function ciclo() {
       const e = estadoChat(c.chat);
       if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
       // só figurinha ou só reação/resposta a um status nosso desde a última leitura: não é atendimento
-      const novas = db.prepare('SELECT tipo, status_resp FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.ultimo_ts || 0);
-      if (novas.length && novas.every((m) => m.status_resp || m.tipo === 'figurinha')) {
+      // (resposta a status com texto vai para o modelo: pedido de informação é atendido, "parabéns"/"top" não)
+      const novas = db.prepare('SELECT tipo, texto, status_resp FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.ultimo_ts || 0);
+      if (novas.length && novas.every((m) => m.tipo === 'figurinha' || (m.status_resp && !/[\p{L}\p{N}]/u.test(m.texto || '')))) {
         db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
-        log(`${c.chat}: só figurinha/status, sem resposta`);
+        log(`${c.chat}: só figurinha/reação a status, sem resposta`);
         continue;
       }
       const aus = textoAusencia();

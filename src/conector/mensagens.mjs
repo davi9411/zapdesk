@@ -24,11 +24,15 @@ export function classificar(m) {
   return null; // reações, protocolo etc. são ignorados
 }
 
-// mensagem que responde/reage a um status nosso (o WhatsApp cita o status com remoteJid "status@broadcast")
-export function respondeStatus(m) {
-  if (!m) return false;
-  return Object.values(m).some((v) => v && typeof v === 'object' && v.contextInfo?.remoteJid === 'status@broadcast');
+// mensagem que responde/reage a um status nosso (o WhatsApp cita o status com remoteJid "status@broadcast"):
+// devolve o texto do status citado (ou "[imagem]" etc.), ou null se não for resposta a status
+export function statusCitado(m) {
+  const ci = Object.values(m || {}).find((v) => v && typeof v === 'object' && v.contextInfo?.remoteJid === 'status@broadcast')?.contextInfo;
+  if (!ci) return null;
+  const q = classificar(ci.quotedMessage);
+  return String(q?.texto || `[${q?.tipo || 'status'}]`).slice(0, 300);
 }
+export const respondeStatus = (m) => statusCitado(m) !== null;
 
 // Prefere o número (@s.whatsapp.net) ao LID quando o protocolo informa os dois.
 export function jidChat(key) {
