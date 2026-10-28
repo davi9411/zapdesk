@@ -9,10 +9,11 @@ import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './regras/ausencia.mjs';
 import { classificar, jidChat, extensao, statusCitado } from './conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from './canais/fila.mjs';
+import { decifrarVoto, opcoesVotadas } from './conector/enquete.mjs';
 import { processoVivo } from './sistema.mjs';
 import { limparMidia } from './regras/limpeza.mjs';
 
-const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers } = B;
+const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers, jidNormalizedUser } = B;
 
 garantirPastas();
 const db = abrirDb();
@@ -188,8 +189,33 @@ const travar = db.prepare(`UPDATE outbox SET status = 'enviando' WHERE id = ? AN
 let conectado = false;
 let enviando = false;
 
+const insEnquete = db.prepare('INSERT OR REPLACE INTO enquetes (id, chat, ts, nome, opcoes, segredo) VALUES (?, ?, ?, ?, ?, ?)');
 async function enviarItem(it) {
-  for (const conteudo of planoEnvio(it)) await sock.sendMessage(it.chat, conteudo);
+  for (const conteudo of planoEnvio(it)) {
+    const r = await sock.sendMessage(it.chat, conteudo);
+    // enquete: guarda o segredo para decifrar os votos que chegarem
+    const segredo = r?.message?.messageContextInfo?.messageSecret;
+    if (conteudo.poll && r?.key?.id && segredo) insEnquete.run(r.key.id, it.chat, Math.floor(Date.now() / 1000), conteudo.poll.name, JSON.stringify(conteudo.poll.values), Buffer.from(segredo).toString('base64'));
+  }
+}
+
+// voto numa enquete nossa: decifra e grava como mensagem "voto" (texto = opção escolhida) para o agente ler
+function salvarVoto(msg, pu) {
+  const enq = db.prepare('SELECT * FROM enquetes WHERE id = ?').get(pu.pollCreationMessageKey?.id);
+  if (!enq || msg.key.fromMe) return false;
+  const eu = sock?.user || {};
+  const k = msg.key;
+  const voto = decifrarVoto(pu.vote, { idEnquete: enq.id, segredo: enq.segredo,
+    criadores: [eu.id && jidNormalizedUser(eu.id), eu.lid && jidNormalizedUser(eu.lid)],
+    eleitores: [k.participant, k.participantAlt, k.remoteJid, k.remoteJidAlt].map((j) => j && jidNormalizedUser(j)) });
+  if (!voto) { log(`voto na enquete ${enq.id} não decifrado`); return true; }
+  const [opcao] = opcoesVotadas(voto.selectedOptions, JSON.parse(enq.opcoes));
+  if (!opcao) return true; // voto retirado
+  const ts = num(msg.messageTimestamp) || Math.floor(Date.now() / 1000);
+  upChat.run(enq.chat, msg.pushName || null, 0, ts);
+  insMsg.run(enq.chat, k.id, ts, 0, msg.pushName || enq.chat, 'voto', opcao, null, null, null, 0, null);
+  log(`voto ${enq.chat}: ${opcao}`);
+  return true;
 }
 
 async function processarFila() {
@@ -253,6 +279,8 @@ async function conectar() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const m of messages) {
       try {
+        const pu = desembrulhar(m.message)?.pollUpdateMessage;
+        if (pu) { salvarVoto(m, pu); continue; }
         const nova = await salvar(m, { baixar: true });
         if (nova && type === 'notify') verificarAusencia(nova);
       } catch (e) { log('erro ao salvar', e.message); }

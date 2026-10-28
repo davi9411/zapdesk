@@ -1,0 +1,37 @@
+// Enquete do WhatsApp (substitui os botões, que só existem na API oficial).
+// O voto chega cifrado em "pollUpdateMessage"; o Baileys 7 não decifra mais sozinho, então decifra aqui
+// com o segredo guardado no envio da enquete.
+import { createHash } from 'node:crypto';
+import { decryptPollVote } from '@whiskeysockets/baileys';
+
+// opções da escolha do primeiro contato (o número na frente permite responder só "1" ou "2")
+export const OPCOES_ESCOLHA = ['1 - Seguir com o atendimento agora', '2 - Aguardar a equipe'];
+export const PERGUNTA_ESCOLHA = 'Como prefere seguir?';
+
+const hash = (s) => createHash('sha256').update(Buffer.from(s)).digest().toString('hex');
+
+// "1", "2", "opção 2", "1️⃣", "2." -> 'ia' | 'humano'; qualquer outra coisa -> null (o modelo interpreta)
+export function escolhaPorNumero(texto) {
+  const m = String(texto || '').trim().match(/^(?:op[çc][ãa]o\s*|n[ºo°]?\s*)?([12])(?:️?⃣)?\s*[.!)\-]?\s*$/i);
+  return m ? (m[1] === '1' ? 'ia' : 'humano') : null;
+}
+
+// texto da opção votada ("1 - ...") -> 'ia' | 'humano'
+export const escolhaPorVoto = (opcao) => escolhaPorNumero(String(opcao || '').split(' - ')[0]);
+
+// hashes das opções votadas -> textos das opções
+export function opcoesVotadas(hashes, opcoes) {
+  const mapa = Object.fromEntries(opcoes.map((o) => [hash(o), o]));
+  return (hashes || []).map((h) => mapa[Buffer.from(h).toString('hex')]).filter(Boolean);
+}
+
+// Decifra o voto. Os JIDs usados na cifra podem ser o número ou o LID (depende do aparelho): tenta as combinações.
+export function decifrarVoto(voto, { idEnquete, segredo, criadores, eleitores }) {
+  const pollEncKey = Buffer.from(segredo, 'base64');
+  for (const pollCreatorJid of criadores.filter(Boolean)) {
+    for (const voterJid of eleitores.filter(Boolean)) {
+      try { return decryptPollVote(voto, { pollEncKey, pollCreatorJid, pollMsgId: idEnquete, voterJid }); } catch {}
+    }
+  }
+  return null;
+}

@@ -23,8 +23,10 @@ function midia(f, legenda) {
 export function planoEnvio(it) {
   const arquivos = it.arquivos ? JSON.parse(it.arquivos) : [];
   const texto = it.texto || '';
-  if (arquivos.length === 1) return [midia(arquivos[0], texto)];
+  if (arquivos.length === 1 && !it.enquete) return [midia(arquivos[0], texto)];
   const plano = texto ? [{ text: texto }] : [];
   for (const f of arquivos) plano.push(midia(f));
+  // enquete (no lugar de botões): vai depois do texto, uma opção por voto
+  if (it.enquete) { const q = JSON.parse(it.enquete); plano.push({ poll: { name: q.nome, values: q.opcoes, selectableCount: 1 } }); }
   return plano;
 }

@@ -20,7 +20,8 @@ export function classificar(m) {
   if (m.stickerMessage) return { tipo: 'figurinha' };
   if (m.locationMessage) return { tipo: 'outro', texto: `localização ${m.locationMessage.degreesLatitude},${m.locationMessage.degreesLongitude}` };
   if (m.contactMessage) return { tipo: 'outro', texto: `contato ${m.contactMessage.displayName}` };
-  if (m.pollCreationMessage) return { tipo: 'outro', texto: `enquete: ${m.pollCreationMessage.name}` };
+  const enq = m.pollCreationMessage || m.pollCreationMessageV2 || m.pollCreationMessageV3;
+  if (enq) return { tipo: 'enquete', texto: `enquete: ${enq.name}` };
   return null; // reações, protocolo etc. são ignorados
 }
 

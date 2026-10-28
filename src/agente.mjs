@@ -29,6 +29,7 @@ import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
 import { limparTextoCliente, caminhosNegados } from './agente/protecao.mjs';
+import { OPCOES_ESCOLHA, PERGUNTA_ESCOLHA, escolhaPorNumero, escolhaPorVoto } from './conector/enquete.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
@@ -69,7 +70,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT', 'escolha_pendente INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -109,8 +110,8 @@ const RODAPE = '_Este é um agente de IA em fase de desenvolvimento e pode comet
 const rodape = (cfg) => { const r = cfg.rodape ?? RODAPE; return r ? `\n\n${r}` : ''; };
 const paraCliente = (cfg, texto) => cabecalho(cfg) + texto + rodape(cfg);
 
-function enfileirar(chat, nome, texto) {
-  db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, ?, NULL, ?, ?)').run(chat, nome, texto, agora(), agora());
+function enfileirar(chat, nome, texto, enquete = null) {
+  db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado, enquete) VALUES (?, ?, ?, NULL, ?, ?, ?)').run(chat, nome, texto, agora(), agora(), enquete && JSON.stringify(enquete));
 }
 function avisarDavi(cfg, texto) { enfileirar(cfg.daviJids[0], 'Davi (pessoal)', `🤖 *${cfg.nome} (agente)*\n${texto}`); }
 
@@ -138,6 +139,8 @@ function textoConversa(cfg, chat, limite = 25) {
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
     else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
     else if (m.tipo === 'figurinha') t = '[figurinha]';
+    else if (m.tipo === 'voto') t = `[votou na enquete: "${m.texto}"]`;
+    else if (m.tipo === 'enquete') t = `[enquete enviada: "${(m.texto || '').replace(/^enquete: /, '')}" com as opções 1 e 2]`;
     if (m.status_resp) t = `[resposta ao nosso status: "${m.status_texto || '?'}"] ${t}`;
     return `[${quando}] ${quem}: ${t}`;
   }).join('\n');
@@ -182,7 +185,8 @@ function textoAusencia() {
   } catch { return []; }
 }
 // documento enviado pelo agente fica salvo como "arquivo.zip — legenda": o cabeçalho vem depois do nome
-const ehDoAgente = (cfg, texto) => { const t = texto || ''; const cab = cabecalho(cfg); return t.startsWith(cab) || t.includes(` — ${cab}`); };
+// (a enquete da escolha também é do agente: o WhatsApp devolve como mensagem minha "enquete: ...")
+const ehDoAgente = (cfg, texto) => { const t = texto || ''; const cab = cabecalho(cfg); return t.startsWith(cab) || t.includes(` — ${cab}`) || t === `enquete: ${PERGUNTA_ESCOLHA}`; };
 // mensagem minha que não é do agente nem o aviso automático = alguém da equipe escrevendo
 const ehHumano = (cfg, texto, aus) => !ehDoAgente(cfg, texto) && !aus.includes(texto);
 
@@ -267,7 +271,9 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     contexto: contextoAgora(cfg),
     // quando uma pessoa da equipe atende (para o cliente escolher entre o agente e a equipe)
     retornoEquipe: cfg.horario ? (aberto(cfg.horario) ? 'ainda hoje, no horário de atendimento' : textoRetorno(cfg.horario)) : null,
-    escolhaFeita: !!(e.escolha || e.apresentado),
+    // conversas antigas (apresentado sem enquete) contam como escolha feita
+    escolhaFeita: !!(e.escolha || (e.apresentado && !e.escolha_pendente)),
+    escolhaDetectada: escolhaDetectada(e),
     pastaRobo: pastaRobo(cfg, chat),
     perfil: perfilDo(cfg, chat, e), estilo: e.estilo,
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
@@ -328,6 +334,17 @@ function guardarPerfil(cfg, chat, e, r) {
   log(`perfil ${chat}: ${p} (etiqueta "${mapa[p]}")`);
 }
 
+// escolha do primeiro contato pelo voto na enquete ou por um número sozinho ("1"/"2"); texto livre fica com o modelo
+function escolhaDetectada(e) {
+  if (e.escolha || !e.escolha_pendente) return null;
+  const novas = db.prepare('SELECT tipo, texto FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? ORDER BY ts DESC').all(e.chat, e.ultimo_ts || 0);
+  for (const m of novas) {
+    const x = m.tipo === 'voto' ? escolhaPorVoto(m.texto) : m.tipo === 'texto' ? escolhaPorNumero(m.texto) : null;
+    if (x) return x;
+  }
+  return null;
+}
+
 // ---------- atendimento de um cliente ----------
 async function atenderCliente(cfg, chat, nome, ateTs) {
   const e = estadoChat(chat);
@@ -338,7 +355,8 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   }
   // conhece o cliente (Notion + repositório) antes de responder, mas só se ele já parece cliente
   if (deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
-  const prompt = promptCliente(argsPrompt(cfg, chat, e));
+  const args = argsPrompt(cfg, chat, e);
+  const prompt = promptCliente(args);
   let r;
   try { r = await chamarClaude(prompt, 240_000, pastaRobo(cfg, chat) ? { ferramentas: ['Read', 'Glob', 'Grep'], pastas: [pastaRobo(cfg, chat)], turnos: 10 } : undefined); }
   catch (err) { log(`ERRO claude ${chat}: ${err.message}`); falhou(cfg, err.message); return; } // não marca como lido: tenta de novo no próximo ciclo
@@ -347,7 +365,9 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (r.nome_cliente) db.prepare('UPDATE agente_chat SET nome_cliente = ? WHERE chat = ?').run(String(r.nome_cliente).slice(0, 60), chat);
   if (r.origem) db.prepare('UPDATE agente_chat SET origem = ? WHERE chat = ?').run(String(r.origem).slice(0, 80), chat);
   // primeiro contato que diz já ser cliente (ex.: comprou com outro número): procura no Notion pelo nome informado
-  // escolha do primeiro contato: seguir com o agente ou aguardar uma pessoa da equipe
+  // escolha do primeiro contato: seguir com o agente ou aguardar uma pessoa da equipe (voto/número valem mais que o modelo)
+  if (args.escolhaDetectada) r.escolha = args.escolhaDetectada;
+  if (r.escolha === 'ia' || r.escolha === 'humano') db.prepare('UPDATE agente_chat SET escolha_pendente = 0 WHERE chat = ?').run(chat);
   if (r.escolha === 'ia' && !e.escolha) db.prepare("UPDATE agente_chat SET escolha = 'ia' WHERE chat = ?").run(chat);
   if (r.escolha === 'humano') {
     db.prepare("UPDATE agente_chat SET escolha = 'humano', prefere_humano_ts = ? WHERE chat = ?").run(agora(), chat);
@@ -369,7 +389,10 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (texto.length > 600) log(`resposta longa (${texto.length} caracteres) para ${chat}`);
   let acao = r.acao;
   if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou obtendo essa informação e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
-  enfileirar(chat, nome, paraCliente(cfg, texto));
+  // primeiro contato oferecendo a escolha: a enquete (1/2) vai logo depois da mensagem
+  const comEnquete = args.primeiroContato && !args.escolhaFeita && !r.escolha && acao === 'responder' && cfg.enqueteEscolha !== false;
+  enfileirar(chat, nome, paraCliente(cfg, texto), comEnquete ? { nome: PERGUNTA_ESCOLHA, opcoes: OPCOES_ESCOLHA } : null);
+  if (comEnquete) { db.prepare('UPDATE agente_chat SET escolha_pendente = 1 WHERE chat = ?').run(chat); log(`${chat}: enquete da escolha enviada`); }
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
   if (!e.etiquetado && cfg.etiquetaLead && !propaganda) {
     db.prepare('UPDATE agente_chat SET etiquetado = 1 WHERE chat = ?').run(chat);

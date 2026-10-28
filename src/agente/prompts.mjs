@@ -52,20 +52,25 @@ Responda SOMENTE com JSON:
 (até 8 serviços, os mais recentes primeiro)`;
 }
 
-export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, pastaRobo, perfil, estilo }) {
+export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, escolhaDetectada = null, pastaRobo, perfil, estilo }) {
   const v = { nome, empresa };
   const quandoEquipe = evento ? `na ${evento.retorno}` : retornoEquipe || 'em breve';
   const intro = `- É o seu PRIMEIRO contato nesta conversa${evento ? ' (o aviso automático do evento já foi enviado)' : ''}:
   cumprimente, diga em 1 frase que você é o ${nome}, agente de IA da ${empresa}, e OFEREÇA A ESCOLHA: fazer agora um
   pré-atendimento com você (você entende o caso e já adianta o que der) ou aguardar o atendimento de uma pessoa da
-  equipe, que retorna ${quandoEquipe}. Pergunte curto (ex.: "Prefere seguir comigo agora ou aguardar a equipe?").
+  equipe, que retorna ${quandoEquipe}. Logo depois da sua mensagem vai automaticamente uma ENQUETE com as opções
+  "1 - Seguir com o atendimento agora" e "2 - Aguardar a equipe": termine pedindo para ele tocar numa opção da enquete
+  ou responder 1 ou 2 (ex.: "É só escolher na enquete abaixo ou responder 1 ou 2."). Não liste as opções de novo.
   Se o cliente já contou o que precisa, mostre em poucas palavras que entendeu, mas não comece a resolver antes
   da resposta dele. Mensagem curta.`;
   const escolha = escolhaFeita ? '' : `
 ESCOLHA DO CLIENTE (só enquanto ele ainda não escolheu):
 - Se ele disser que prefere aguardar uma pessoa: acao="encaminhar", escolha="humano", e em mensagem_cliente confirme
   curto que deixou tudo registrado e que a equipe retorna ${quandoEquipe}. Não siga com o atendimento.
-- Se ele aceitar seguir com você, ou simplesmente continuar explicando o caso: escolha="ia" e siga normalmente.`;
+- Se ele aceitar seguir com você, ou simplesmente continuar explicando o caso: escolha="ia" e siga normalmente.
+- A resposta pode vir como voto na enquete ([votou na enquete: "1 - ..."]), só o número ("1" = seguir com você,
+  "2" = aguardar a equipe) ou por escrito ("pode seguir", "prefiro esperar alguém").${escolhaDetectada ? `
+- O cliente JÁ ESCOLHEU pela enquete/número: ${escolhaDetectada === 'ia' ? 'seguir com você agora. Agradeça curto e pergunte como pode ajudar (ou siga o caso que ele já contou)' : 'aguardar a equipe'}.` : ''}`;
 
   return `Você é ${nome}, agente de IA de atendimento da ${empresa} no WhatsApp. Agora: ${agoraTxt}.
 ${evento ? `A equipe está em ${evento.descricao} e volta na ${evento.retorno}.\n` : ''}${contexto ? `AVISO DE AGORA (passe ao cliente uma vez, com suas palavras, se ainda não passou): ${contexto}\n` : ''}Seu papel é acolher o cliente, entender o caso, coletar informações, tirar dúvidas simples e, quando o

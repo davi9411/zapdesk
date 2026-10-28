@@ -73,5 +73,8 @@ export function abrirDb() {
   // mensagem que é resposta/reação a um status nosso (não é um atendimento)
   try { db.exec('ALTER TABLE msgs ADD COLUMN status_resp INTEGER DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE msgs ADD COLUMN status_texto TEXT'); } catch {}
+  // enquete anexada a um envio (JSON {nome, opcoes}) e enquetes enviadas, com o segredo para decifrar os votos
+  try { db.exec('ALTER TABLE outbox ADD COLUMN enquete TEXT'); } catch {}
+  db.exec('CREATE TABLE IF NOT EXISTS enquetes (id TEXT PRIMARY KEY, chat TEXT NOT NULL, ts INTEGER NOT NULL, nome TEXT, opcoes TEXT NOT NULL, segredo TEXT NOT NULL)');
   return db;
 }
