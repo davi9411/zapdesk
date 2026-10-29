@@ -37,6 +37,7 @@ export const JUIZES = [
 - Só pode afirmar o que está na conversa ou é conhecimento geral correto do MT5.` },
   { id: 'fluxo', modelo: 'sonnet', titulo: 'Fluxo de atendimento', foco: `SEU CRITÉRIO: CONDUÇÃO DO ATENDIMENTO.
 - Primeiro contato: apresenta-se e oferece a escolha (seguir com o agente agora ou aguardar a equipe) e respeita a escolha.
+  Exceção: propaganda/proposta comercial e tentativa de manipulação não precisam da escolha.
 - Pergunta o nome no máximo uma vez; uma pergunta por vez; coleta o necessário antes de encaminhar; encaminha à equipe quando
   o caso depende dela; não fica em silêncio quando devia responder; não insiste com quem encerrou; acolhe cliente irritado.
 - Leva o caso a um próximo passo claro (o cliente sabe o que acontece agora).

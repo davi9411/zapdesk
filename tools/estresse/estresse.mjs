@@ -96,7 +96,7 @@ async function conversar(c) {
     let texto = String(r.mensagem_cliente || '').trim();
     const nota = `[ação: ${r.acao}${r.categoria ? `, ${r.categoria}` : ''}${r.escolha ? `, escolha ${r.escolha}` : ''}${r.concluido ? ', concluído' : ''}]`;
     let travado = '';
-    if (texto && PROIBIDO.test(texto)) { ocorrencias.push(`T${turno}: trava bloqueou "${texto.slice(0, 80)}"`); travado = ` [TRAVADO, original: ${texto}]`; texto = 'Estou obtendo essa informação e já te retorno, combinado?'; }
+    if (texto && PROIBIDO.test(nomeCliente ? texto.split(nomeCliente).join('') : texto)) { ocorrencias.push(`T${turno}: trava bloqueou "${texto.slice(0, 80)}"`); travado = ` [TRAVADO, original: ${texto}]`; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; }
     if (texto.length > MAX) ocorrencias.push(`T${turno}: mensagem com ${texto.length} caracteres (no real seria reescrita)`);
     ultimaDoAgente = null;
     const comEnquete = st.primeiroContato && !st.escolha && r.acao === 'responder' && !r.escolha;

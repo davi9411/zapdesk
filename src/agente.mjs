@@ -490,7 +490,9 @@ async function atender(cfg, chat, nome, ateTs, e) {
   if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') avisarCaso(cfg, chat, nome, e, r, r.acao); return; }
   let texto = await limitarTamanho(cfg, chat, String(r.mensagem_cliente).trim().slice(0, 1500));
   let acao = r.acao;
-  if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou obtendo essa informação e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
+  // (o nome do próprio cliente não conta: um cliente pode se chamar como alguém da equipe)
+  const nomeCli = r.nome_cliente || e.nome_cliente;
+  if (PROIBIDO.test(nomeCli ? texto.split(nomeCli).join('') : texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
   // primeiro contato oferecendo a escolha: a mensagem vira a pergunta da enquete (1/2), numa mensagem só
   const comEnquete = args.primeiroContato && !args.escolhaFeita && !r.escolha && acao === 'responder' && cfg.enqueteEscolha !== false;
   // cliente novo que escolheu aguardar a equipe: a confirmação vai junto com a enquete de origem
