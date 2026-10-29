@@ -131,7 +131,10 @@ Se ele não disser isso, trate como cliente novo.
 perfil_cliente e estilo_cliente: só preencha quando o cliente já escreveu o suficiente nesta conversa para você
 perceber (pelo menos umas 3 mensagens dele). perfil_cliente = "iniciante" se ele tem dificuldade com o MT5/termos
 técnicos, "experiente" se mostra domínio; na dúvida, vazio. estilo_cliente = 1 linha neutra e respeitosa sobre como
-ele escreve e o que ajuda (ex.: "mensagens curtas, prefere passo a passo com print"). Senão, deixe vazios.)`;
+ele escreve e o que ajuda (ex.: "mensagens curtas, prefere passo a passo com print"). Senão, deixe vazios.
+${perfil ? `O perfil registrado hoje é "${perfil}". Você PODE trocá-lo: se a conversa já mostrou com clareza o contrário
+(em mais de uma mensagem, não por um detalhe isolado), devolva o perfil novo em perfil_cliente; se ele continua
+valendo, repita "${perfil}" ou deixe vazio. Atualize estilo_cliente quando perceber algo novo sobre como ele escreve.` : ''})`;
 }
 
 // Davi (dono) escreveu em texto livre no WhatsApp pessoal: descobrir se é um envio a cliente ou orientação de caso.
