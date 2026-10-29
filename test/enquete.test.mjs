@@ -38,3 +38,16 @@ test('voto cifrado é decifrado (tentando número e LID) e vira a opção', () =
   assert.ok(voto);
   assert.deepEqual(opcoesVotadas(voto.selectedOptions, OPCOES_ESCOLHA), [OPCOES_ESCOLHA[1]]);
 });
+
+test('enquete numa mensagem só: cabeçalho, texto e aviso na pergunta, até 255 caracteres', async () => {
+  const { perguntaEnquete, corpoEnquete, notaDoVoto, OPCOES_NOTA, MAX_PERGUNTA } = await import('../src/conector/enquete.mjs');
+  const p = perguntaEnquete('Dante', 'DS Trade', 'Boa noite! Prefere seguir comigo ou aguardar a equipe? Escolha uma opção abaixo ou responda 1 ou 2.');
+  assert.match(p, /^Dante \| Agente IA DS Trade:\n/);
+  assert.match(p, /pode cometer erros\.\)$/);
+  assert.ok(p.length <= MAX_PERGUNTA);
+  assert.equal(corpoEnquete('Dante', 'DS Trade', p).startsWith('Boa noite!'), true);
+  assert.equal(perguntaEnquete('Dante', 'DS Trade', 'x'.repeat(240)), null);
+  assert.deepEqual(OPCOES_NOTA.map(notaDoVoto), [0, 1, 2, 3, 4, 5]);
+  assert.equal(notaDoVoto('1 - Seguir com o atendimento agora'), null);
+  assert.equal(escolhaPorVoto('Nota 1'), null);
+});

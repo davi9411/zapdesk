@@ -52,15 +52,15 @@ Responda SOMENTE com JSON:
 (até 8 serviços, os mais recentes primeiro)`;
 }
 
-export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, escolhaDetectada = null, pastaRobo, perfil, estilo }) {
+export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, escolhaDetectada = null, feedbackPendente = false, podeAvaliar = false, pastaRobo, perfil, estilo }) {
   const v = { nome, empresa };
   const quandoEquipe = evento ? `na ${evento.retorno}` : retornoEquipe || 'em breve';
   const intro = `- É o seu PRIMEIRO contato nesta conversa${evento ? ' (o aviso automático do evento já foi enviado)' : ''}:
   cumprimente, diga em 1 frase que você é o ${nome}, agente de IA da ${empresa}, e OFEREÇA A ESCOLHA: fazer agora um
   pré-atendimento com você (você entende o caso e já adianta o que der) ou aguardar o atendimento de uma pessoa da
-  equipe, que retorna ${quandoEquipe}. Logo depois da sua mensagem vai automaticamente uma ENQUETE com as opções
-  "1 - Seguir com o atendimento agora" e "2 - Aguardar a equipe": termine pedindo para ele tocar numa opção da enquete
-  ou responder 1 ou 2 (ex.: "É só escolher na enquete abaixo ou responder 1 ou 2."). Não liste as opções de novo.
+  equipe, que retorna ${quandoEquipe}. Sua mensagem vira a PERGUNTA de uma ENQUETE com as opções
+  "1 - Seguir com o atendimento agora" e "2 - Aguardar a equipe", tudo numa mensagem só: escreva no MÁXIMO 160
+  caracteres e termine com algo como "Escolha uma opção abaixo ou responda 1 ou 2." Não liste as opções.
   Se o cliente já contou o que precisa, mostre em poucas palavras que entendeu, mas não comece a resolver antes
   da resposta dele. Mensagem curta.`;
   const escolha = escolhaFeita ? '' : `
@@ -114,7 +114,14 @@ ${(ficha.robos || []).map((r) => `- robô: ${r.nome}${r.versao ? ` v${r.versao}`
 ${(ficha.servicos || []).slice(0, 5).map((s) => `- serviço: ${s.servico} ${s.data || ''} ${s.resumo ? `· ${s.resumo}` : ''}`).join('\n')}
 Com ficha encontrada ele NÃO é cliente novo: não pergunte como conheceu.
 ` : ''}${persona('aprendidas', v)}
-${regras.length ? `${regras.map((r) => `- ${r}`).join('\n')}\n` : ''}
+${podeAvaliar ? `- AVALIAÇÃO: se nesta conversa VOCÊ fez o pré-atendimento até o fim e a última mensagem do cliente confirma que
+  resolveu ou que está satisfeito (ex.: "consegui, obrigado", "deu certo"), sem nada pendente e sem caso para a equipe,
+  marque "concluido": true. Aí o pedido de avaliação (nota 0 a 5) vai automaticamente; em mensagem_cliente coloque no
+  máximo um fechamento curto (até 60 caracteres, ex.: "Que bom que deu certo!") ou deixe vazio. Senão, false.
+` : ''}${feedbackPendente ? `- Você pediu uma avaliação do atendimento (nota 0 a 5, comentário opcional). Se a mensagem do cliente for um
+  comentário sobre o atendimento (elogio, crítica, sugestão), copie-o em "feedback_comentario" e responda só um
+  agradecimento curto. Se for um assunto novo, deixe feedback_comentario vazio e atenda normalmente.
+` : ''}${regras.length ? `${regras.map((r) => `- ${r}`).join('\n')}\n` : ''}
 Imagens enviadas pelo cliente aparecem como [foto: caminho]; use a ferramenta Read para olhar se ajudar.
 
 CONVERSA (mais antiga primeiro; CLIENTE = cliente, ${nome.toUpperCase()} = você, EQUIPE = mensagem humana da equipe, AVISO = aviso automático;
@@ -124,7 +131,7 @@ ${conversa}
 CONVERSA>>>
 
 Responda SOMENTE com um objeto JSON, sem texto antes ou depois:
-{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|propaganda|outro","perfil_cliente":"iniciante|experiente|vazio","estilo_cliente":"","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio","diz_ja_cliente":false,"escolha":"ia|humano|vazio se ainda não escolheu"}
+{"acao":"responder|encaminhar|consultar|silencio","mensagem_cliente":"texto para o cliente (vazio se silencio)","pergunta_davi":"só se consultar","resumo_davi":"só se encaminhar/consultar","sugestao_davi":"só se encaminhar/consultar","resumo":"1 frase: quem é e o que quer","categoria":"bug|duvida|pedido|propaganda|outro","perfil_cliente":"iniciante|experiente|vazio","estilo_cliente":"","nome_cliente":"nome se o cliente informou, senão vazio","origem":"como conheceu, se informou, senão vazio","diz_ja_cliente":false,"escolha":"ia|humano|vazio se ainda não escolheu","concluido":false,"feedback_comentario":""}
 (diz_ja_cliente = true só se você NÃO tem ficha dele e o cliente disse que já é cliente da ${empresa} / já comprou antes,
 por exemplo com outro número; nesse caso pergunte o nome completo usado na compra, se ainda não souber, para localizar.
 Se ele não disser isso, trate como cliente novo.

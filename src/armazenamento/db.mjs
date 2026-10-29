@@ -76,5 +76,7 @@ export function abrirDb() {
   // enquete anexada a um envio (JSON {nome, opcoes}) e enquetes enviadas, com o segredo para decifrar os votos
   try { db.exec('ALTER TABLE outbox ADD COLUMN enquete TEXT'); } catch {}
   db.exec('CREATE TABLE IF NOT EXISTS enquetes (id TEXT PRIMARY KEY, chat TEXT NOT NULL, ts INTEGER NOT NULL, nome TEXT, opcoes TEXT NOT NULL, segredo TEXT NOT NULL)');
+  // avaliações dos clientes no fim do pré-atendimento (nota 0-5 pela enquete + comentário opcional)
+  db.exec('CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT NOT NULL, nome TEXT, pedido_ts INTEGER NOT NULL, resumo TEXT, nota INTEGER, nota_ts INTEGER, comentario TEXT, comentario_ts INTEGER)');
   return db;
 }
