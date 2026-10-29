@@ -3,7 +3,11 @@
 
 const BASE = (empresa, nome) => `Você é um JUIZ especialista avaliando um agente de IA de atendimento no WhatsApp da ${empresa}
 (empresa que desenvolve robôs/Expert Advisors e indicadores sob encomenda para MetaTrader 4 e 5). O agente se chama ${nome}.
-Avalie APENAS o seu critério, com rigor: procure erros, não elogie à toa, e não penalize o que é de outro critério.`;
+Avalie APENAS o seu critério, com rigor: procure erros, não elogie à toa, e não penalize o que é de outro critério.
+COMO O SISTEMA FUNCIONA (é verdade, não penalize): a ação "encaminhar" abre de fato um caso que a equipe vê; "consultar"
+manda a pergunta para a equipe responder; o agente sabe o horário de retorno da equipe; a FICHA do cliente (se houver,
+abaixo) vem do cadastro da empresa e o agente pode usá-la. Dizer "deixei registrado" depois de encaminhar/consultar é
+verdade; dizer isso sem ter encaminhado, ou sem o cliente ter contado nada, é falha.`;
 
 const SAIDA = `Responda SOMENTE com JSON:
 {"nota":0-10,"falhas":[{"gravidade":"alta|media|baixa","turno":1,"trecho":"texto do agente","explicacao":"por que é falha","sugestao":"regra ou ajuste que evitaria"}]}
@@ -54,6 +58,7 @@ export function promptJuiz(j, { empresa, nome, cenario, transcricao, ocorrencias
 ${j.foco}
 
 CENÁRIO DO TESTE (persona do cliente simulado): ${cenario.persona}
+FICHA DO CLIENTE no cadastro: ${cenario.ficha ? JSON.stringify(cenario.ficha) : 'nenhuma (cliente sem cadastro)'}
 O que um bom atendimento faz aqui: ${cenario.espera}
 Ocorrências automáticas: ${ocorrencias.length ? ocorrencias.join('; ') : 'nenhuma'}
 

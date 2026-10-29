@@ -27,7 +27,7 @@ import { uptime } from 'node:os';
 import { PATHS } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
-import { criarTrava } from './agente/travas.mjs';
+import { criarTrava, termoProibido, promptReescrita } from './agente/travas.mjs';
 import { limparTextoCliente, caminhosNegados } from './agente/protecao.mjs';
 import { OPCOES_ORIGEM, PERGUNTA_ORIGEM, ehVotoOrigem, OPCOES_ESCOLHA, PERGUNTA_ESCOLHA, OPCOES_NOTA, PEDIDO_NOTA, notaDoVoto, perguntaEnquete, corpoEnquete, escolhaPorNumero, escolhaPorVoto } from './conector/enquete.mjs';
 import { cartao } from './notificador/cartao.mjs';
@@ -490,9 +490,14 @@ async function atender(cfg, chat, nome, ateTs, e) {
   if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') avisarCaso(cfg, chat, nome, e, r, r.acao); return; }
   let texto = await limitarTamanho(cfg, chat, String(r.mensagem_cliente).trim().slice(0, 1500));
   let acao = r.acao;
-  // (o nome do próprio cliente não conta: um cliente pode se chamar como alguém da equipe)
   const nomeCli = r.nome_cliente || e.nome_cliente;
-  if (PROIBIDO.test(nomeCli ? texto.split(nomeCli).join('') : texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
+  const termo = termoProibido(PROIBIDO, texto, nomeCli);
+  if (termo) {
+    let novo = '';
+    try { novo = String((await chamarClaude(promptReescrita(texto, termo), 90_000, { turnos: 1 })).texto || '').trim(); } catch { /* cai no texto padrão */ }
+    if (novo && !termoProibido(PROIBIDO, novo, nomeCli)) { log(`reescrito (citava "${termo}") ${chat}: ${texto}`); texto = novo; }
+    else { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
+  }
   // primeiro contato oferecendo a escolha: a mensagem vira a pergunta da enquete (1/2), numa mensagem só
   const comEnquete = args.primeiroContato && !args.escolhaFeita && !r.escolha && acao === 'responder' && cfg.enqueteEscolha !== false;
   // cliente novo que escolheu aguardar a equipe: a confirmação vai junto com a enquete de origem

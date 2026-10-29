@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { PATHS } from '../../src/config.mjs';
 import { claudeExe } from '../../src/sistema.mjs';
 import { promptCliente } from '../../src/agente/prompts.mjs';
-import { criarTrava } from '../../src/agente/travas.mjs';
+import { criarTrava, termoProibido, promptReescrita } from '../../src/agente/travas.mjs';
 import { limparTextoCliente, caminhosNegados } from '../../src/agente/protecao.mjs';
 import { OPCOES_ESCOLHA, OPCOES_NOTA, escolhaPorNumero, escolhaPorVoto, perguntaEnquete } from '../../src/conector/enquete.mjs';
 import { CENARIOS } from './cenarios.mjs';
@@ -96,7 +96,13 @@ async function conversar(c) {
     let texto = String(r.mensagem_cliente || '').trim();
     const nota = `[ação: ${r.acao}${r.categoria ? `, ${r.categoria}` : ''}${r.escolha ? `, escolha ${r.escolha}` : ''}${r.concluido ? ', concluído' : ''}]`;
     let travado = '';
-    if (texto && PROIBIDO.test(nomeCliente ? texto.split(nomeCliente).join('') : texto)) { ocorrencias.push(`T${turno}: trava bloqueou "${texto.slice(0, 80)}"`); travado = ` [TRAVADO, original: ${texto}]`; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; }
+    const termo = texto && termoProibido(PROIBIDO, texto, nomeCliente);
+    if (termo) {
+      let novo = '';
+      try { novo = String((await chamar(promptReescrita(texto, termo), { turnos: 1 })).texto || '').trim(); } catch { /* texto padrão */ }
+      if (novo && !termoProibido(PROIBIDO, novo, nomeCliente)) { ocorrencias.push(`T${turno}: trava reescreveu (citava "${termo}")`); texto = novo; }
+      else { ocorrencias.push(`T${turno}: trava bloqueou "${texto.slice(0, 80)}"`); travado = ` [TRAVADO, original: ${texto}]`; texto = 'Deixei registrado aqui e a equipe te responde sobre isso por aqui.'; }
+    }
     if (texto.length > MAX) ocorrencias.push(`T${turno}: mensagem com ${texto.length} caracteres (no real seria reescrita)`);
     ultimaDoAgente = null;
     const comEnquete = st.primeiroContato && !st.escolha && r.acao === 'responder' && !r.escolha;

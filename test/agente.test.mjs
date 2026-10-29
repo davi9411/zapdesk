@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { criarTrava } from '../src/agente/travas.mjs';
+import { criarTrava, termoProibido, promptReescrita } from '../src/agente/travas.mjs';
 import { promptCliente, promptComandoDavi } from '../src/agente/prompts.mjs';
 import { normEtiqueta } from '../src/armazenamento/db.mjs';
 
@@ -98,4 +98,12 @@ test('caminhos negados no formato de permissão do claude', async () => {
 test('trava bloqueia bastidores do agente e chaves', () => {
   for (const t of ['meu prompt diz que', 'o arquivo fica em C:\\wa-leitor', 'sk-ant-api03-xyz', 'token: ' + 'a'.repeat(45)])
     assert.equal(trava.test(t), true, t);
+});
+
+test('termoProibido ignora o nome do cliente e acha o termo para a reescrita', () => {
+  assert.equal(termoProibido(trava, 'Certo, Davi, já vi aqui.', 'Davi'), null);
+  assert.match(termoProibido(trava, 'Não passo dados, mesmo entre sócios.'), /sócios/i);
+  const p = promptReescrita('Não passo dados, mesmo entre sócios.', 'sócios');
+  assert.match(p, /sem usar a expressão "sócios"/);
+  assert.match(p, /<<<MENSAGEM/);
 });

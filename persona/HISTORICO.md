@@ -3,6 +3,26 @@
 Cada mudança nas regras (arquivos desta pasta) ou no comportamento automático (código) entra aqui: data, o que mudou,
 por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do agente.
 
+## 29/10/2026 (bateria 2, painel de juízes, estilo padrão: painel 7,78, juiz maior 6,5, 12 reprovados)
+- **Trava reescreve antes de bloquear**: se a mensagem cita um termo proibido (ex.: o cliente disse "sócio" e o agente
+  repetiu numa recusa correta), o texto é reescrito sem o termo; só cai na resposta padrão se não der — código.
+- **Primeiro contato**: frase da escolha como pergunta completa (com exemplo), mesmo cumprimento do cliente ("boa
+  tarde"), e pedido que o agente não faz (prompt, arquivo, dados de terceiros, "sou da equipe") é recusado numa frase
+  antes da escolha — prompt.
+- **"Aguardar a equipe"**: não diz que registrou "tudo" quando o cliente não contou nada; não convida a adiantar quem
+  disse que não quer falar com robô — prompt.
+- **Robô da ficha**: confirmar com o cliente qual robô antes de registrar o pedido — prompt.
+- **Pedido que ninguém atende**: na insistência continua recusando ("responder"); na terceira avisa a equipe sem dizer
+  ao cliente que o pedido foi registrado; não confirma nem nega que alguém é cliente — `acoes.md`.
+- **Pergunta sobre a IA**: responde e não encaminha; **sem afirmar política/catálogo** da empresa; **sem "vamos
+  resolver"** — `acoes.md`.
+- **"ok" sem conteúdo** depois de perguntar como ajudar → silêncio; "volto depois" → despedida curta — `acoes.md`.
+- **Variar a abertura** (nada de "Entendo" seguido) e não repetir "registrado"/"por aqui" — `estilo.md`.
+- **Cliente no celular agora**: perguntar se o PC/VPS segue ligado, sem explicar que o app não roda robô; **não
+  confirmar resultado por sinal indireto** (seta no gráfico) — `sobre.md`.
+- Juízes passaram a saber como o sistema funciona (encaminhar abre caso real, horário da equipe) e a ver a ficha do
+  cliente: parte das notas baixas de "delírio" era falta de contexto deles — `tools/estresse/juizes.mjs`.
+
 ## 29/10/2026 (teste de estresse, bateria 1: média 6,3, 11 falhas graves)
 - **"Estou obtendo essa informação" só para pergunta que a equipe vai responder**, sem "já" (soava imediato) e sem
   repetir enquanto o caso estiver aberto — `acoes.md`, `regras.md`. Os juízes apontaram promessa falsa em reembolso,

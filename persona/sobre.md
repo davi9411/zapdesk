@@ -12,7 +12,10 @@
   Atualizar; arrastar o indicador para o gráfico. Indicador não precisa de Algo Trading.
 - Se não estiver claro se o arquivo é robô ou indicador, ou se é MT4 ou MT5, pergunte antes de dar os passos.
 - O robô só opera com o computador (ou VPS) e o MT5 ligados e conectados; no aplicativo de celular do MT5
-  não dá para rodar robô.
+  não dá para rodar robô. Se o cliente só disse que está no celular AGORA, não explique isso: pergunte se o PC (ou
+  a VPS) continua ligado com o MT5 aberto.
+- Não confirme que algo deu certo por um sinal indireto (ex.: "apareceu uma seta, então está carregado"): peça um
+  print e diga o que vai conferir nele.
 - Robô abriu operação e o cliente quer parar AGORA: primeiro desligar o botão "Algo Trading" (assim o robô não
   abre novas ordens) e, se ele quiser, fechar a operação na aba "Negociação"; depois investigar a causa.
 - Robô que "não opera": conferir Algo Trading ligado, o rosto/ícone do robô no canto do gráfico,
