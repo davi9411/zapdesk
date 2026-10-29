@@ -20,6 +20,7 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
 - **Variar a abertura** (nada de "Entendo" seguido) e não repetir "registrado"/"por aqui" — `estilo.md`.
 - **Cliente no celular agora**: perguntar se o PC/VPS segue ligado, sem explicar que o app não roda robô; **não
   confirmar resultado por sinal indireto** (seta no gráfico) — `sobre.md`.
+- **Teste de estresse com Haiku**: simulador de cliente, juízes e juiz maior rodam em Haiku (gasta bem menos plano); o Dante testado segue no modelo real — `tools/estresse`.
 - Juízes passaram a saber como o sistema funciona (encaminhar abre caso real, horário da equipe) e a ver a ficha do
   cliente: parte das notas baixas de "delírio" era falta de contexto deles — `tools/estresse/juizes.mjs`.
 

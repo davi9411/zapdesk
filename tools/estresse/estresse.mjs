@@ -75,7 +75,7 @@ async function conversar(c) {
   const st = { primeiroContato: true, escolhaPendente: false, escolha: null, apresentado: false, avaliacao: false };
   let ultimaDoAgente = null, nomeCliente = null;
   for (let turno = 1; turno <= TURNOS; turno++) {
-    const cli = await chamar(promptSimulado(c, linhas.join('\n'), ultimaDoAgente), { modelo: 'sonnet', turnos: 1 });
+    const cli = await chamar(promptSimulado(c, linhas.join('\n'), ultimaDoAgente), { modelo: 'haiku', turnos: 1 });
     if (cli.erro) { ocorrencias.push(`simulador falhou no turno ${turno}`); break; }
     if (cli.fim || !String(cli.mensagem || '').trim()) break;
     const msg = String(cli.mensagem).trim();
@@ -128,7 +128,7 @@ async function rodarCenario(c) {
   const conv = await conversar(c);
   const ctx = { empresa: EMPRESA, nome: NOME, cenario: c, transcricao: conv.transcricao, ocorrencias: conv.ocorrencias };
   const [maior, ...painel] = await Promise.all([
-    chamar(promptJuiz(JUIZ_MAIOR, ctx), { turnos: 1 }),
+    chamar(promptJuiz(JUIZ_MAIOR, ctx), { modelo: 'haiku', turnos: 1 }),
     ...JUIZES.map((j) => chamar(promptJuiz(j, ctx), { modelo: j.modelo, turnos: 1 })),
   ]);
   const juizes = Object.fromEntries(JUIZES.map((j, i) => [j.id, painel[i]]));
