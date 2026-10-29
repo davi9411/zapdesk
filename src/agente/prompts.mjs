@@ -52,23 +52,27 @@ Responda SOMENTE com JSON:
 (até 8 serviços, os mais recentes primeiro)`;
 }
 
-export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, escolhaDetectada = null, feedbackPendente = false, podeAvaliar = false, pastaRobo, perfil, estilo }) {
+export function promptCliente({ nome, conversa, primeiroContato, casosAbertos, empresa, evento, clienteNovo, nomeCliente, origem, agoraTxt, sugestao, esperaMin = 0, contexto, regras = [], ficha, retornoEquipe, escolhaFeita = false, escolhaDetectada = null, avisoEnviado = false, feedbackPendente = false, podeAvaliar = false, pastaRobo, perfil, estilo }) {
   const v = { nome, empresa };
   const quandoEquipe = evento ? `na ${evento.retorno}` : retornoEquipe || 'em breve';
-  const intro = `- É o seu PRIMEIRO contato nesta conversa${evento ? ' (o aviso automático do evento já foi enviado)' : ''}:
-  cumprimente, diga em 1 frase que você é o ${nome}, agente de IA da ${empresa}, e OFEREÇA A ESCOLHA: fazer agora um
+  const intro = `- É o seu PRIMEIRO contato nesta conversa${avisoEnviado ? `. O AVISO automático acabou de ser enviado e JÁ cumprimentou e
+  apresentou você (${nome}): NÃO cumprimente de novo, não diga "Olá"/"Sou o ${nome}" e não repita o aviso. Comece direto` : `:
+  cumprimente, diga em 1 frase que você é o ${nome}, agente de IA da ${empresa}, e`} OFEREÇA A ESCOLHA: fazer agora um
   pré-atendimento com você (você entende o caso e já adianta o que der) ou aguardar o atendimento de uma pessoa da
   equipe, que retorna ${quandoEquipe}. Sua mensagem vira a PERGUNTA de uma ENQUETE com as opções
-  "1 - Seguir com o atendimento agora" e "2 - Aguardar a equipe", tudo numa mensagem só: escreva no MÁXIMO 160
-  caracteres e termine com algo como "Escolha uma opção abaixo ou responda 1 ou 2." Não liste as opções.
+  "1 - Seguir agora com o pré-atendimento" e "2 - Aguardar o atendimento da equipe", tudo numa mensagem só.
+  Escreva de 120 a 175 caracteres (NUNCA mais), cordial e claro, sem ficar seco: explique em poucas palavras o que
+  é o pré-atendimento (você entende o caso e já adianta o que der) e quando a equipe retorna, e termine com algo
+  como "Escolha uma opção abaixo ou responda 1 ou 2." Não liste as opções.
   Se o cliente já contou o que precisa, mostre em poucas palavras que entendeu, mas não comece a resolver antes
   da resposta dele. Mensagem curta.`;
   const escolha = escolhaFeita ? '' : `
 ESCOLHA DO CLIENTE (só enquanto ele ainda não escolheu):
 - Se ele disser que prefere aguardar uma pessoa: acao="encaminhar", escolha="humano", e em mensagem_cliente confirme
-  curto que deixou tudo registrado e que a equipe retorna ${quandoEquipe}. Não siga com o atendimento.
+  com cordialidade (até 150 caracteres) que deixou tudo registrado e que a equipe retorna ${quandoEquipe}, e que se ele
+  quiser já pode adiantar o que precisa. Não siga com o atendimento.
 - Se ele aceitar seguir com você, ou simplesmente continuar explicando o caso: escolha="ia" e siga normalmente.
-- A resposta pode vir como voto na enquete ([votou na enquete: "1 - ..."]), só o número ("1" = seguir com você,
+- A resposta pode vir como voto na enquete ([votou na enquete: "1 - ..."] ou "2 - ..."), só o número ("1" = seguir com você,
   "2" = aguardar a equipe) ou por escrito ("pode seguir", "prefiro esperar alguém").${escolhaDetectada ? `
 - O cliente JÁ ESCOLHEU pela enquete/número: ${escolhaDetectada === 'ia' ? 'seguir com você agora. Agradeça curto e pergunte como pode ajudar (ou siga o caso que ele já contou)' : 'aguardar a equipe'}.` : ''}`;
 
@@ -80,10 +84,11 @@ ${persona('sobre', v)}
 
 O QUE VOCÊ FAZ
 ${clienteNovo ? `- Cliente NOVO (sem conversa anterior com a ${empresa}). Siga esta ordem, uma ou duas perguntas por vez:
-  1) cumprimentar; 2) se não souber o nome da pessoa, perguntar como ela se chama; 3) perguntar como
-  conheceu a ${empresa} (Instagram, YouTube, indicação, Google...); 4) entender o que ela quer.
-  Se o cliente já respondeu algo disso, não pergunte de novo. Se a conversa mostra que ele já é cliente
-  antigo da ${empresa}, não pergunte como conheceu.` : `- Cliente que já conversou com a ${empresa} antes: não pergunte como conheceu; se não souber o nome, pode perguntar.`}
+  1) cumprimentar; 2) se não souber o nome da pessoa, perguntar como ela se chama; 3) entender o que ela quer.
+  Não pergunte como conheceu a ${empresa}: isso vai numa enquete automática no fim.` : `- Cliente que já conversou com a ${empresa} antes: não pergunte como conheceu.`}
+- NOME: se não souber o nome da pessoa, pergunte UMA única vez na conversa (veja na CONVERSA se você já perguntou).
+  Se ela não respondeu, siga sem o nome e não pergunte de novo. Sabendo o nome, use-o de vez em quando (não em toda
+  mensagem): por exemplo na primeira resposta depois de saber, ao dar uma boa notícia e ao encerrar.
 ${pastaRobo ? `- Suporte de um robô que a ${empresa} desenvolveu para este cliente: os arquivos estão em ${pastaRobo}.
   Antes de orientar a mudar um parâmetro, confira no .mq5 (linhas "input"; o texto depois de "//" é o nome que
   aparece no MT5) e cite o nome EXATO do campo e o valor padrão. Não copie código para o cliente.` : ''}

@@ -29,7 +29,7 @@ import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
 import { criarTrava } from './agente/travas.mjs';
 import { limparTextoCliente, caminhosNegados } from './agente/protecao.mjs';
-import { OPCOES_ESCOLHA, PERGUNTA_ESCOLHA, OPCOES_NOTA, PEDIDO_NOTA, notaDoVoto, perguntaEnquete, corpoEnquete, escolhaPorNumero, escolhaPorVoto } from './conector/enquete.mjs';
+import { OPCOES_ORIGEM, PERGUNTA_ORIGEM, ehVotoOrigem, OPCOES_ESCOLHA, PERGUNTA_ESCOLHA, OPCOES_NOTA, PEDIDO_NOTA, notaDoVoto, perguntaEnquete, corpoEnquete, escolhaPorNumero, escolhaPorVoto } from './conector/enquete.mjs';
 import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
@@ -41,8 +41,8 @@ const ARQ_PID = join(PATHS.data, 'agente.pid');
 const ARQ_LOG = join(PATHS.data, 'agente.log');
 const PASTA_CLAUDE = join(PATHS.data, 'agente'); // cwd vazio p/ o claude -p (sem memória de projeto)
 const CLAUDE = claudeExe();
-const DEBOUNCE_S = 20;     // espera o cliente terminar de mandar várias mensagens
-const CICLO_MS = 10_000;
+const DEBOUNCE_S = 8;      // espera o cliente terminar de mandar várias mensagens (curto: ele ainda está na tela)
+const CICLO_MS = 5_000;
 
 const log = (...a) => { const l = `[${new Date().toLocaleString('pt-BR')}] ${a.join(' ')}\n`; try { appendFileSync(ARQ_LOG, l); } catch {} };
 
@@ -70,7 +70,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
-for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT', 'escolha_pendente INTEGER DEFAULT 0', 'feedback_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
+for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT', 'escolha_pendente INTEGER DEFAULT 0', 'feedback_ts INTEGER DEFAULT 0', 'avaliar_apos_ts INTEGER DEFAULT 0', 'avaliar_resumo TEXT', 'momento_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
 const kv = { get: (k) => db.prepare('SELECT v FROM agente_kv WHERE k = ?').get(k)?.v, set: (k, v) => db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run(k, String(v)) };
@@ -206,6 +206,8 @@ function pastaRobo(cfg, chat) {
   const caminho = join(cfg.fichas.repo, String(p).replace(/^[\\/]+/, ''));
   return existsSync(caminho) ? caminho : null;
 }
+// ficha de contato de TESTE (agente.json "fichasTeste": {"5511...": {resumo, robos}}): simula um cliente do Notion
+const fichaTeste = (cfg, chat) => { const f = cfg?.fichasTeste?.[numeroDe(chat)]; return f ? { encontrado: true, ...f } : null; };
 const fichaGuardada = (chat) => { try { return JSON.parse(db.prepare('SELECT dados FROM agente_ficha WHERE chat = ?').get(chat)?.dados || 'null'); } catch { return null; } };
 // Só consulta quem parece cliente: salvo na agenda, com conversa anterior (mais de 3 dias) ou com a equipe,
 // ou que disse ser cliente. Primeiro contato de número desconhecido = cliente novo, sem consulta.
@@ -270,7 +272,7 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
   const teveHumano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts > ?').all(chat, agora() - 3 * 86400).some((m) => ehHumano(cfg, m.texto, aus));
   // há quanto tempo a mensagem mais antiga ainda não respondida espera (retomada depois de ficar fora do ar)
   const pendente = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').get(chat, e.ultimo_ts || 0).t;
-  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(), ficha: fichaGuardada(chat),
+  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(), ficha: fichaTeste(cfg, chat) || fichaGuardada(chat),
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
@@ -280,6 +282,8 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     // conversas antigas (apresentado sem enquete) contam como escolha feita
     escolhaFeita: !!(e.escolha || (e.apresentado && !e.escolha_pendente)),
     escolhaDetectada: escolhaDetectada(e),
+    // o aviso automático (que já apresenta o agente) foi enviado nas últimas 24 h
+    avisoEnviado: db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts > ?').all(chat, agora() - 86400).some((m) => aus.includes(m.texto)),
     // avaliação pedida há menos de 2 dias e ainda sem comentário: a próxima mensagem pode ser o comentário
     feedbackPendente: !!(e.feedback_ts && agora() - e.feedback_ts < 2 * 86400 && db.prepare('SELECT comentario FROM feedback WHERE chat = ? ORDER BY id DESC LIMIT 1').get(chat)?.comentario == null),
     podeAvaliar: cfg.feedback !== false && !e.feedback_ts && !teveHumano && !abertos.length && e.escolha !== 'humano',
@@ -377,6 +381,24 @@ Responda SOMENTE com JSON: {"texto":"mensagem reescrita"}`, 90_000, { turnos: 1 
 
 // ---------- avaliação do atendimento (fase de testes) ----------
 // uma mensagem só: fechamento curto do agente + pedido de nota, com a enquete 0-5; o comentário é opcional
+// cliente novo (fora do Notion ou não salvo na agenda) e sem origem registrada: pergunta como conheceu, por enquete
+function precisaOrigem(cfg, chat, e) {
+  if (cfg.enqueteOrigem === false || e.origem || fichaTeste(cfg, chat)) return false;
+  const salvo = db.prepare('SELECT salvo FROM chats WHERE jid = ?').get(chat)?.salvo;
+  return !fichaGuardada(chat)?.encontrado || !salvo;
+}
+function pedirOrigem(cfg, chat, nome, texto) {
+  const pergunta = PERGUNTA_ORIGEM.replace('{empresa}', cfg.empresa);
+  enfileirarEnquete(cfg, chat, nome, texto ? `${texto} ${pergunta}` : pergunta, OPCOES_ORIGEM, pergunta);
+  log(`${chat}: enquete de origem enviada`);
+}
+// avaliação depois da enquete de origem: sai quando ela vota ou, sem voto, depois de 15 min (sem cobrar a origem)
+function avaliacoesPendentes(cfg) {
+  for (const a of db.prepare('SELECT a.chat, a.avaliar_resumo, c.nome FROM agente_chat a LEFT JOIN chats c ON c.jid = a.chat WHERE a.avaliar_apos_ts > 0 AND a.avaliar_apos_ts < ?').all(agora() - 900)) {
+    db.prepare('UPDATE agente_chat SET avaliar_apos_ts = 0 WHERE chat = ?').run(a.chat);
+    pedirAvaliacao(cfg, a.chat, a.nome, '', a.avaliar_resumo);
+  }
+}
 function pedirAvaliacao(cfg, chat, nome, fecho, resumo) {
   const curto = fecho && !PROIBIDO.test(fecho) && fecho.length <= 60 ? `${fecho} ` : '';
   enfileirarEnquete(cfg, chat, nome, `${curto}${PEDIDO_NOTA}`, OPCOES_NOTA, 'Nota do atendimento (0 a 5)');
@@ -404,7 +426,17 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
     return;
   }
   // conhece o cliente (Notion + repositório) antes de responder, mas só se ele já parece cliente
-  if (deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
+  // resposta demorando (ficha, leitura dos arquivos do robô): avisa uma vez que está verificando (no máximo 1 a cada 15 min)
+  const momento = e.apresentado ? setTimeout(() => {
+    if (agora() - (estadoChat(chat).momento_ts || 0) < 900) return;
+    db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), chat);
+    enfileirar(chat, nome, paraCliente(cfg, 'Só um momento, estou verificando isso para você.'));
+    log(`${chat}: aviso de "um momento"`);
+  }, cfg.momentoS ? cfg.momentoS * 1000 : 25_000) : null;
+  try { await atender(cfg, chat, nome, ateTs, e); } finally { clearTimeout(momento); }
+}
+async function atender(cfg, chat, nome, ateTs, e) {
+  if (!fichaTeste(cfg, chat) && deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
   const args = argsPrompt(cfg, chat, e);
   const prompt = promptCliente(args);
   let r;
@@ -436,7 +468,11 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   // pré-atendimento resolvido até o fim pelo agente: pede a avaliação (enquete 0-5), uma vez por conversa
   if (r.concluido && args.podeAvaliar && (r.acao === 'silencio' || r.acao === 'responder')) {
     const fecho = String(r.mensagem_cliente || '').trim();
-    pedirAvaliacao(cfg, chat, nome, fecho, r.resumo);
+    // cliente novo: primeiro a enquete de origem; a de avaliação vem depois do voto (ou em 15 min)
+    if (precisaOrigem(cfg, chat, estadoChat(chat))) {
+      pedirOrigem(cfg, chat, nome, fecho && !PROIBIDO.test(fecho) && fecho.length <= 80 ? fecho : '');
+      db.prepare('UPDATE agente_chat SET avaliar_apos_ts = ?, avaliar_resumo = ?, feedback_ts = ? WHERE chat = ?').run(agora(), r.resumo || null, agora(), chat);
+    } else pedirAvaliacao(cfg, chat, nome, fecho, r.resumo);
     db.prepare('UPDATE agente_chat SET msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
     return;
   }
@@ -448,7 +484,10 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   if (PROIBIDO.test(texto)) { log(`bloqueado (proibido) ${chat}: ${texto}`); acao = 'consultar'; texto = 'Estou obtendo essa informação e já te retorno, combinado?'; r.pergunta_davi = `${r.pergunta_davi || ''} (resposta automática bloqueada por citar preço/nomes internos)`.trim(); }
   // primeiro contato oferecendo a escolha: a mensagem vira a pergunta da enquete (1/2), numa mensagem só
   const comEnquete = args.primeiroContato && !args.escolhaFeita && !r.escolha && acao === 'responder' && cfg.enqueteEscolha !== false;
+  // cliente novo que escolheu aguardar a equipe: a confirmação vai junto com a enquete de origem
+  const comOrigem = r.escolha === 'humano' && !e.escolha && acao === 'encaminhar' && precisaOrigem(cfg, chat, estadoChat(chat));
   if (comEnquete) enfileirarEnquete(cfg, chat, nome, texto, OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
+  else if (comOrigem) pedirOrigem(cfg, chat, nome, texto);
   else enfileirar(chat, nome, paraCliente(cfg, texto));
   if (comEnquete) { db.prepare('UPDATE agente_chat SET escolha_pendente = 1 WHERE chat = ?').run(chat); log(`${chat}: enquete da escolha enviada`); }
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
@@ -698,6 +737,7 @@ async function ciclo() {
     fecharAssumidos(cfg);
     if (kv.get('pausado') === '1' || Date.now() < esperarAte) return;
     lembrarCasos(cfg);
+    avaliacoesPendentes(cfg);
 
     // 2) clientes com mensagem nova (privado, dentro do período, fora das listas)
     const lim = agora() - DEBOUNCE_S;
@@ -721,7 +761,12 @@ async function ciclo() {
       // (resposta a status com texto vai para o modelo: pedido de informação é atendido, "parabéns"/"top" não)
       const novas = db.prepare('SELECT tipo, texto, status_resp FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.ultimo_ts || 0);
       for (const m of novas) if (m.tipo === 'voto' && notaDoVoto(m.texto) !== null) guardarNota(c.chat, notaDoVoto(m.texto));
-      if (novas.length && novas.every((m) => m.tipo === 'voto' && notaDoVoto(m.texto) !== null)) {
+      for (const m of novas) if (m.tipo === 'voto' && ehVotoOrigem(m.texto)) {
+        db.prepare('UPDATE agente_chat SET origem = ? WHERE chat = ?').run(m.texto, c.chat);
+        log(`${c.chat}: origem ${m.texto}`);
+        if (e.avaliar_apos_ts) { db.prepare('UPDATE agente_chat SET avaliar_apos_ts = 0 WHERE chat = ?').run(c.chat); pedirAvaliacao(cfg, c.chat, c.nome, '', e.avaliar_resumo); }
+      }
+      if (novas.length && novas.every((m) => m.tipo === 'voto' && (notaDoVoto(m.texto) !== null || ehVotoOrigem(m.texto)))) {
         db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
         continue;
       }

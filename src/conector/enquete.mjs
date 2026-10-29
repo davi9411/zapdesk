@@ -5,17 +5,21 @@ import { createHash } from 'node:crypto';
 import { decryptPollVote } from '@whiskeysockets/baileys';
 
 // opções da escolha do primeiro contato (o número na frente permite responder só "1" ou "2")
-export const OPCOES_ESCOLHA = ['1 - Seguir com o atendimento agora', '2 - Aguardar a equipe'];
+export const OPCOES_ESCOLHA = ['1 - Seguir agora com o pré-atendimento', '2 - Aguardar o atendimento da equipe'];
 export const PERGUNTA_ESCOLHA = 'Como prefere seguir?';
 // avaliação no fim de um pré-atendimento que o agente resolveu sozinho (fase de testes)
 export const OPCOES_NOTA = ['Nota 0', 'Nota 1', 'Nota 2', 'Nota 3', 'Nota 4', 'Nota 5'];
 export const PEDIDO_NOTA = 'Pode avaliar este atendimento de 0 a 5? Se quiser, deixe também um comentário (opcional).';
+// como o cliente novo conheceu a empresa (enquete, só para quem não está no Notion ou não está salvo na agenda)
+export const OPCOES_ORIGEM = ['Google', 'Site', 'Instagram', 'Telegram', 'Indicação', 'Outro'];
+export const PERGUNTA_ORIGEM = 'Como você conheceu a {empresa}?';
+export const ehVotoOrigem = (opcao) => OPCOES_ORIGEM.includes(String(opcao || ''));
 export const notaDoVoto = (opcao) => { const m = String(opcao || '').match(/^Nota ([0-5])$/); return m ? Number(m[1]) : null; };
 
 // Enquete numa mensagem só: cabeçalho, texto e aviso de IA vão na própria pergunta.
 // O WhatsApp corta a pergunta da enquete por volta de 255 caracteres: se não couber, devolve null.
 export const MAX_PERGUNTA = 255;
-export const AVISO_CURTO = '(Agente de IA em desenvolvimento, pode cometer erros.)';
+export const AVISO_CURTO = '(Agente de IA em teste, pode cometer erros.)';
 export function perguntaEnquete(nome, empresa, texto) {
   const p = `${nome} | Agente IA ${empresa}:\n${String(texto || '').trim()}\n\n${AVISO_CURTO}`;
   return p.length <= MAX_PERGUNTA ? p : null;

@@ -33,12 +33,12 @@ test('nome de etiqueta ignora emoji, número e acento', () => {
 
 test('prompt do cliente muda com evento, sugestão e espera longa', () => {
   const base = { nome: 'Dante', empresa: 'Empresa X', conversa: '[x] CLIENTE: oi', casosAbertos: '', agoraTxt: 'agora' };
-  const evento = promptCliente({ ...base, primeiroContato: true, evento: { descricao: 'um evento', retorno: 'sexta' } });
-  assert.match(evento, /aviso automático do evento/);
+  const evento = promptCliente({ ...base, primeiroContato: true, avisoEnviado: true, evento: { descricao: 'um evento', retorno: 'sexta' } });
+  assert.match(evento, /JÁ cumprimentou e\s+apresentou você/);
   assert.match(evento, /equipe, que retorna na sexta/);
   const normal = promptCliente({ ...base, primeiroContato: true, clienteNovo: true, retornoEquipe: 'amanhã às 09:00' });
   assert.match(normal, /como\s+conheceu/);
-  assert.doesNotMatch(normal, /aviso automático do evento/);
+  assert.doesNotMatch(normal, /JÁ cumprimentou/);
   // primeiro contato: oferece pré-atendimento com a IA ou aguardar a equipe
   assert.match(normal, /pré-atendimento/);
   assert.match(normal, /retorna amanhã às 09:00/);
