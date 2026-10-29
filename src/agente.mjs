@@ -41,8 +41,17 @@ const ARQ_PID = join(PATHS.data, 'agente.pid');
 const ARQ_LOG = join(PATHS.data, 'agente.log');
 const PASTA_CLAUDE = join(PATHS.data, 'agente'); // cwd vazio p/ o claude -p (sem memória de projeto)
 const CLAUDE = claudeExe();
-const DEBOUNCE_S = 8;      // espera o cliente terminar de mandar várias mensagens (curto: ele ainda está na tela)
+const DEBOUNCE_S = 5;      // espera depois da última mensagem (ou de parar de digitar) antes de responder
+const DIGITANDO_MAX_S = 60; // "digitando" sem atualização há mais que isso não segura a resposta
 const CICLO_MS = 5_000;
+// ritmo dinâmico: confere a cada 5 s com conversa ativa e vai espaçando quando tudo fica parado
+// (o modelo só é chamado quando há mensagem nova; aqui é só a leitura do banco)
+function proximoCiclo() {
+  const ult = db.prepare("SELECT MAX(ts) t FROM msgs WHERE meu = 0 AND chat NOT LIKE '%@g.us' AND chat NOT LIKE '%broadcast'").get().t || 0;
+  const pres = db.prepare("SELECT MAX(ts) t FROM presenca WHERE estado IN ('composing','recording')").get().t || 0;
+  const parado = agora() - Math.max(ult, pres);
+  return parado < 120 ? CICLO_MS : parado < 600 ? 10_000 : parado < 1800 ? 20_000 : 30_000;
+}
 
 const log = (...a) => { const l = `[${new Date().toLocaleString('pt-BR')}] ${a.join(' ')}\n`; try { appendFileSync(ARQ_LOG, l); } catch {} };
 
@@ -756,7 +765,10 @@ async function ciclo() {
         continue;
       }
       const e = estadoChat(c.chat);
-      if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda digitando
+      if (c.ult <= e.ultimo_ts || c.ult > lim) continue; // nada novo, ou cliente ainda mandando mensagens
+      // está digitando/gravando áudio: espera terminar; parou há menos de 5 s: espera mais um pouco
+      const pr = db.prepare('SELECT estado, ts FROM presenca WHERE chat = ?').get(c.chat);
+      if (pr && pr.ts > c.ult - 2 && ((['composing', 'recording'].includes(pr.estado) && agora() - pr.ts < DIGITANDO_MAX_S) || agora() - pr.ts < DEBOUNCE_S)) continue;
       // só figurinha ou só reação/resposta a um status nosso desde a última leitura: não é atendimento
       // (resposta a status com texto vai para o modelo: pedido de informação é atendido, "parabéns"/"top" não)
       const novas = db.prepare('SELECT tipo, texto, status_resp FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.ultimo_ts || 0);
@@ -798,5 +810,9 @@ async function ciclo() {
 }
 
 log(`agente iniciado (PID ${process.pid})`);
-setInterval(ciclo, CICLO_MS);
-ciclo();
+(async function loop() {
+  await ciclo();
+  let ms = CICLO_MS;
+  try { ms = proximoCiclo(); } catch {}
+  setTimeout(loop, ms);
+})();

@@ -189,6 +189,24 @@ const travar = db.prepare(`UPDATE outbox SET status = 'enviando' WHERE id = ? AN
 let conectado = false;
 let enviando = false;
 
+// ---------- digitando ----------
+// Assinar a presença de um contato não deixa o número "online" (o celular continua com as notificações);
+// o WhatsApp passa a avisar quando ele está digitando ("composing"), gravando ("recording") ou parou ("available").
+const insPresenca = db.prepare('INSERT OR REPLACE INTO presenca (chat, estado, ts) VALUES (?, ?, ?)');
+const assinados = new Map();
+function assinarPresenca(jid) {
+  if (!sock || !conectado || jid.endsWith('@g.us') || Date.now() - (assinados.get(jid) || 0) < 3_600_000) return;
+  assinados.set(jid, Date.now());
+  sock.presenceSubscribe(jid).catch((e) => log(`presença ${jid}: ${e.message}`));
+}
+async function guardarPresenca({ id, presences }) {
+  if (!id || id.endsWith('@g.us')) return;
+  let chat = id;
+  if (chat.endsWith('@lid')) { try { chat = (await sock.signalRepository?.lidMapping?.getPNForLID?.(chat)) || chat; } catch {} }
+  chat = jidNormalizedUser(chat);
+  for (const p of Object.values(presences || {})) insPresenca.run(chat, p.lastKnownPresence || '', Math.floor(Date.now() / 1000));
+}
+
 const insEnquete = db.prepare('INSERT OR REPLACE INTO enquetes (id, chat, ts, nome, opcoes, segredo) VALUES (?, ?, ?, ?, ?, ?)');
 async function enviarItem(it) {
   for (const conteudo of planoEnvio(it)) {
@@ -283,6 +301,7 @@ async function conectar() {
         if (pu) { salvarVoto(m, pu); continue; }
         const nova = await salvar(m, { baixar: true });
         if (nova && type === 'notify') verificarAusencia(nova);
+        if (nova && type === 'notify' && !nova.meu && !nova.grupo) assinarPresenca(nova.jid);
       } catch (e) { log('erro ao salvar', e.message); }
     }
   });
@@ -296,6 +315,7 @@ async function conectar() {
     if (baixar) log(`histórico sob demanda recebido: ${messages.length} mensagem(ns)`);
     for (const m of messages) { try { await salvar(m, { baixar }); } catch {} }
   });
+  sock.ev.on('presence.update', (p) => guardarPresenca(p).catch((e) => log('erro presença', e.message)));
   sock.ev.on('contacts.upsert', (cs) => cs.forEach(guardarContato));
   sock.ev.on('contacts.update', (cs) => cs.forEach((c) => c.name && guardarContato(c)));
   sock.ev.on('labels.edit', (l) => { try { guardarEtiqueta(l); } catch (e) { log('erro etiqueta', e.message); } });
