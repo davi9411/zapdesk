@@ -161,3 +161,10 @@ servidor próprio 24h (Linux + Docker), migração, acesso remoto, regras, chatb
 
 ## Licença
 MIT, ver [LICENSE](LICENSE).
+
+## Teste de estresse do agente
+
+`node tools/estresse/estresse.mjs` simula clientes (22 cenários em 3 níveis, 5 estilos de persona) conversando com o
+agente, sem WhatsApp, e um painel de juízes (regras, veracidade de MT5, português e tom, tamanho, delírio, fluxo) mais um
+juiz maior avalia cada conversa. Use `--estilo`, `--nivel`, `--cenarios` e `--refazer <pasta>` (só os reprovados).
+Resultado em `<dados>/estresse/`.
