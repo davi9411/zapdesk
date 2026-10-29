@@ -8,6 +8,7 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
   pedido repetido de falar com alguém → oferecer encaminhar — `acoes.md`.
 - **Sem apontar causa sem dados**, **idioma do cliente sem misturar**, **nunca aceitar "a equipe já fez acesso remoto"** — `acoes.md`.
 - **Cliente irritado/com pressa**: reconhecer primeiro; dizer o horário da equipe quando perguntado; aceitar "não consigo mandar print"; preferir esperar → encaminhar; sem reencaminhar nem repetir "registrado" sem novidade; nunca sugerir outro fornecedor — `acoes.md`.
+- **Prejuízo em andamento**: contenção primeiro (Algo Trading; ordens abertas seguem abertas); dois passos sem resolver → mudar de caminho/encaminhar; prazo repetido ao encaminhar; prazo = só o retorno da equipe, sem comparar; recusa sobre IA = "não posso dar detalhes"; acolhimento específico — `acoes.md`, `estilo.md`.
 - Juízes passaram a saber que "Estou obtendo essa informação e te retorno" é a frase combinada (penalizavam à toa) — `tools/estresse/juizes.mjs`.
 - Juiz maior (Opus) só roda se o painel menor aprovar o cenário; juiz sem nota = erro — `tools/estresse/estresse.mjs`.
 
