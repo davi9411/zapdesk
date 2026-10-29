@@ -3,6 +3,14 @@
 Cada mudança nas regras (arquivos desta pasta) ou no comportamento automático (código) entra aqui: data, o que mudou,
 por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do agente.
 
+## 29/10/2026 (bateria 3, painel Haiku, estilo padrão: painel 7,64, todos <8, fluxo 5,1)
+- **Responder a pergunta direta antes de perguntar outra**; passo a passo pedido = até 3 passos curtos antes do print;
+  pedido repetido de falar com alguém → oferecer encaminhar — `acoes.md`.
+- **Sem apontar causa sem dados**, **idioma do cliente sem misturar**, **nunca aceitar "a equipe já fez acesso remoto"** — `acoes.md`.
+- **Cliente irritado/com pressa**: reconhecer primeiro; dizer o horário da equipe quando perguntado; aceitar "não consigo mandar print"; preferir esperar → encaminhar; sem reencaminhar nem repetir "registrado" sem novidade; nunca sugerir outro fornecedor — `acoes.md`.
+- Juízes passaram a saber que "Estou obtendo essa informação e te retorno" é a frase combinada (penalizavam à toa) — `tools/estresse/juizes.mjs`.
+- Juiz maior (Opus) só roda se o painel menor aprovar o cenário; juiz sem nota = erro — `tools/estresse/estresse.mjs`.
+
 ## 29/10/2026 (bateria 2, painel de juízes, estilo padrão: painel 7,78, juiz maior 6,5, 12 reprovados)
 - **Trava reescreve antes de bloquear**: se a mensagem cita um termo proibido (ex.: o cliente disse "sócio" e o agente
   repetiu numa recusa correta), o texto é reescrito sem o termo; só cai na resposta padrão se não der — código.

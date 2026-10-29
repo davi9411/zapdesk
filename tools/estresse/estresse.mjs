@@ -127,21 +127,22 @@ async function conversar(c) {
 async function rodarCenario(c) {
   const conv = await conversar(c);
   const ctx = { empresa: EMPRESA, nome: NOME, cenario: c, transcricao: conv.transcricao, ocorrencias: conv.ocorrencias };
-  const [maior, ...painel] = await Promise.all([
-    chamar(promptJuiz(JUIZ_MAIOR, ctx), { modelo: 'haiku', turnos: 1 }),
-    ...JUIZES.map((j) => chamar(promptJuiz(j, ctx), { modelo: j.modelo, turnos: 1 })),
-  ]);
+  const painel = await Promise.all(JUIZES.map((j) => chamar(promptJuiz(j, ctx), { modelo: j.modelo, turnos: 1 })));
   const juizes = Object.fromEntries(JUIZES.map((j, i) => [j.id, painel[i]]));
   juizes.tamanho = juizTamanho(conv.mensagens, MAX);
   const notas = Object.values(juizes).map((x) => Number(x.nota)).filter((n) => !Number.isNaN(n));
   const media = notas.length ? notas.reduce((a, b) => a + b, 0) / notas.length : 0;
-  return { id: c.id, nivel: c.nivel, estilo: ESTILO, persona: c.persona, ...conv, juizes, maior, media, aprovado: media >= 8 };
+  const falhou = notas.length < Object.keys(juizes).length; // juiz sem nota = chamada falhou: não conta como aprovado
+  const aprovado = !falhou && media >= 8 && notas.every((n) => n >= 8);
+  // o juiz maior (Opus) só entra quando o painel menor já aprovou o cenário
+  const maior = aprovado ? await chamar(promptJuiz(JUIZ_MAIOR, ctx), { modelo: 'opus', turnos: 1 }) : null;
+  return { id: c.id, nivel: c.nivel, estilo: ESTILO, persona: c.persona, ...conv, juizes, maior, media, aprovado, falhou };
 }
 
 async function emLotes(itens, n, fn) {
   const out = []; let i = 0;
   await Promise.all(Array.from({ length: n }, async () => {
-    while (i < itens.length) { const k = i++; out[k] = await fn(itens[k]); process.stdout.write(`. ${itens[k].id} ${out[k].media.toFixed(1)} (maior ${out[k].maior?.nota ?? '?'})\n`); }
+    while (i < itens.length) { const k = i++; out[k] = await fn(itens[k]); process.stdout.write(`. ${itens[k].id} ${out[k].media.toFixed(1)} (maior ${out[k].maior?.nota ?? (out[k].falhou ? 'ERRO' : '-')})\n`); }
   }));
   return out;
 }

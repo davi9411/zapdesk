@@ -7,7 +7,8 @@ Avalie APENAS o seu critério, com rigor: procure erros, não elogie à toa, e n
 COMO O SISTEMA FUNCIONA (é verdade, não penalize): a ação "encaminhar" abre de fato um caso que a equipe vê; "consultar"
 manda a pergunta para a equipe responder; o agente sabe o horário de retorno da equipe; a FICHA do cliente (se houver,
 abaixo) vem do cadastro da empresa e o agente pode usá-la. Dizer "deixei registrado" depois de encaminhar/consultar é
-verdade; dizer isso sem ter encaminhado, ou sem o cliente ter contado nada, é falha.`;
+verdade; dizer isso sem ter encaminhado, ou sem o cliente ter contado nada, é falha.
+FRASE APROVADA PELO DONO: para pergunta que só a equipe responde (preço, prazo, decisão), "Estou obtendo essa informação e te retorno por aqui" (com o horário de retorno da equipe) é o texto combinado: NÃO é falha, nem promete o valor.`;
 
 const SAIDA = `Responda SOMENTE com JSON:
 {"nota":0-10,"falhas":[{"gravidade":"alta|media|baixa","turno":1,"trecho":"texto do agente","explicacao":"por que é falha","sugestao":"regra ou ajuste que evitaria"}]}
