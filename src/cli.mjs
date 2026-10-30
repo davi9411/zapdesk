@@ -3,7 +3,7 @@
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, openSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { PATHS, pidDeOutroBoot } from './config.mjs';
 import { parseQuando } from './regras/quando.mjs';
 import { processoVivo, python } from './sistema.mjs';
@@ -273,7 +273,37 @@ function reiniciar() {
   console.log('Pedido de reinício enviado: o leitor sai em até 10 s e volta em ~1 min.');
 }
 
-const CMDS = { reiniciar, ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar };
+// wa status-postar <arquivo.jpg> [--legenda "..."] [--todos]
+// Posta um status avulso. Sem --todos só o próprio número vê (teste); com --todos vai para a mesma audiência do status diário.
+async function statusPostar() {
+  const o = opcoes(resto);
+  const arquivo = o._[0];
+  if (!arquivo || !existsSync(arquivo)) { console.error('Uso: wa status-postar <arquivo.jpg> [--legenda "..."] [--todos]'); process.exit(1); }
+  if (!pidVivo()) { console.error('Leitor desligado: o status só sai com ele ligado.'); process.exit(1); }
+  const db = await abrir();
+  // --teste: posta as variantes B, C, D e E (legenda "TESTE <letra>"), só para o próprio número, para descobrir qual o WhatsApp exibe
+  const variantes = o.teste ? ['B', 'C', 'D', 'E'] : [null];
+  for (const variante of variantes) {
+    const para = typeof o.para === 'string' ? o.para.split(',').map((n) => n.replace(/\D/g, '')) : null;
+    const valor = JSON.stringify({ arquivo: resolve(arquivo), legenda: o.legenda === true ? null : (o.legenda ?? null), todos: !!o.todos, variante, para });
+    const r = db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES ('status', 'status@broadcast', ?, strftime('%s','now'))").run(valor);
+    const id = Number(r.lastInsertRowid);
+    let fim = false;
+    for (let i = 0; i < 120 && !fim; i++) { // espera até 60 s (o primeiro envio de imagem pode demorar)
+      await new Promise((res) => setTimeout(res, 500));
+      const s = db.prepare('SELECT status, erro FROM acoes WHERE id = ?').get(id);
+      if (s.status === 'feita') { console.log(variante ? `Variante ${variante} enviada.` : `Status postado${o.todos ? ' para a audiência diária' : ' (só você vê)'}.`); fim = true; }
+      else if (s.status === 'falhou') { console.error(`Falhou${variante ? ` (variante ${variante})` : ''}: ${s.erro}`); process.exit(1); }
+    }
+    if (!fim) {
+      console.error('Sem confirmação em 60 s: o leitor em execução pode ser uma versão antiga (sem status). Reinicie o leitor com o programa atualizado.');
+      process.exit(1);
+    }
+    if (variante) await new Promise((res) => setTimeout(res, 3000));
+  }
+}
+
+const CMDS = { reiniciar, ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar, 'status-postar': statusPostar };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 
@@ -290,6 +320,7 @@ if (!CMDS[cmd]) {
   wa ausencia                mensagem de ausência: período, texto e quem já recebeu
   wa etiquetas               etiquetas do WhatsApp Business e quem está em cada uma
   wa etiqueta <nome> <etiqueta> [--tirar]   põe ou tira uma etiqueta
+  wa status-postar <arquivo.jpg> [--legenda "..."] [--todos]   posta um status (sem --todos só você vê)
   wa limpar [--dias 7] [--max-gb 8] [--simular]   apaga mídia antiga (texto e transcrições ficam)`);
   process.exit(cmd ? 1 : 0);
 }

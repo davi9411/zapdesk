@@ -140,7 +140,23 @@ wa ausencia                       # período, texto e quem já recebeu o aviso
 wa etiquetas                      # etiquetas e quem está em cada uma
 wa etiqueta <nome> <etiqueta> [--tirar]
 wa limpar --dias 7 [--max-gb 8] [--simular]   # apaga mídia antiga (texto e transcrições ficam)
+wa reiniciar                      # pede ao leitor para sair; a tarefa agendada o sobe de novo com o programa atualizado
+wa status-postar <arquivo.jpg> [--legenda "..."] [--para 55DDDNUMERO[,...]]   # status avulso; sem --para só o próprio número recebe
 ```
+
+### Status diário com a imagem do brief
+O leitor pode postar no Status do WhatsApp a imagem do dia, uma vez por dia. A imagem e um manifesto
+(`story/AAAA-MM-DD.json` com `{"data", "imagem"}`) ficam num endereço público; o leitor confere esse
+endereço a cada minuto dentro da janela e valida data, origem, tipo JPEG e tamanho antes de postar.
+Só age com `<dados>\status.json` ativo (sem o arquivo, nada acontece):
+```json
+{ "ativo": true, "base_url": "https://raw.githubusercontent.com/<dono>/<repositorio>/main",
+  "hora_ini": 7, "hora_fim": 12, "dias": [0,1,2,3,4,5],
+  "excluir_etiquetas": ["Pessoal"], "so_etiquetas": [], "legenda": "" }
+```
+Quem vê: conversas privadas fora das etiquetas excluídas (ou só as etiquetas de `so_etiquetas`); o WhatsApp
+só mostra o status a quem tem o número salvo. O estado de cada dia fica na tabela `status_postado`
+(no máximo 3 tentativas; erro durante o envio permite no máximo mais uma, para nunca duplicar).
 
 ## Testes
 ```

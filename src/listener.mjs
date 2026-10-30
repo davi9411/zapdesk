@@ -12,6 +12,7 @@ import { avaliarItem, planoEnvio } from './canais/fila.mjs';
 import { decifrarVoto, opcoesVotadas } from './conector/enquete.mjs';
 import { processoVivo } from './sistema.mjs';
 import { limparMidia } from './regras/limpeza.mjs';
+import { lerConfigStatus, verificarStatusDoDia, audienciaDoBanco, AUDIENCIA_PADRAO } from './canais/status.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers, jidNormalizedUser } = B;
 
@@ -103,10 +104,23 @@ async function guardarAssociacao({ type, association: a }) {
   else db.prepare('DELETE FROM etiqueta_chat WHERE chat = ? AND etiqueta = ?').run(chat, a.labelId);
 }
 // Fila "acoes": pôr/tirar etiqueta pelo nome (cria a etiqueta se ela ainda não existir).
+let processandoAcoes = false;
 async function processarAcoes() {
-  if (!conectado) return;
+  if (!conectado || processandoAcoes) return;
+  processandoAcoes = true;
+  try { await rodarAcoes(); } finally { processandoAcoes = false; }
+}
+async function rodarAcoes() {
   for (const ac of db.prepare("SELECT * FROM acoes WHERE status = 'pendente' ORDER BY id LIMIT 5").all()) {
     try {
+      if (ac.tipo === 'status') { // "wa status-postar": status avulso (por padrão só para o próprio número)
+        // reserva antes de enviar: o envio pode passar do intervalo de 5 s e o mesmo pedido nunca pode sair duas vezes
+        if (db.prepare("UPDATE acoes SET status = 'enviando' WHERE id = ? AND status = 'pendente'").run(ac.id).changes !== 1) continue;
+        await postarStatusManual(JSON.parse(ac.valor));
+        db.prepare("UPDATE acoes SET status = 'feita' WHERE id = ?").run(ac.id);
+        log(`ação #${ac.id} status postado`);
+        continue;
+      }
       let et = db.prepare('SELECT * FROM etiquetas').all().find((e) => normEtiqueta(e.nome) === normEtiqueta(ac.valor));
       if (ac.tipo === 'etiqueta+') {
         if (!et) {
@@ -252,6 +266,49 @@ async function processarFila() {
 }
 setInterval(() => processarFila().catch((e) => log('erro na fila', e.message)), 5000);
 
+// ---------- status do WhatsApp (brief do dia) ----------
+// Só age com <dados>\status.json ativo (ver src/canais/status.mjs). Um status por dia, dentro da janela configurada.
+const meuJid = () => (sock?.user?.id ? jidNormalizedUser(sock.user.id) : null);
+const meuLid = () => (sock?.user?.lid ? jidNormalizedUser(sock.user.lid) : null);
+const enviarStatus = async (buf, legenda, jids, extra = {}) => {
+  const r = await sock.sendMessage('status@broadcast', { image: buf, caption: legenda }, { statusJidList: jids, ...extra });
+  log(`status entregue ao servidor do WhatsApp (id ${r?.key?.id}, ${jids.length} conta(s)${extra.additionalAttributes ? ', ' + JSON.stringify(extra.additionalAttributes) : ''})`);
+  return r;
+};
+// Variantes de teste (sempre só para o próprio número): formato da lista de contas e modo de endereçamento do status.
+const VARIANTES_STATUS = {
+  B: () => [[meuJid()], { additionalAttributes: { addressing_mode: 'pn' } }],
+  C: () => [[meuLid()], {}],
+  D: () => [[meuJid(), meuLid()], {}],
+  E: () => [[meuJid(), meuLid()], { additionalAttributes: { addressing_mode: 'pn' } }],
+};
+async function postarStatusManual({ arquivo, legenda, todos, variante, para }) {
+  const buf = readFileSync(arquivo);
+  if (para?.length) { // teste: o próprio número + contas escolhidas (wa status-postar <arq> --para 55119...)
+    if (!para.every((n) => /^\d{10,15}$/.test(n))) throw new Error('--para: use só números com DDI, ex.: 5511999999999');
+    return enviarStatus(buf, legenda || 'TESTE P', [meuJid(), ...para.map((n) => `${n}@s.whatsapp.net`)]);
+  }
+  if (variante) {
+    const v = VARIANTES_STATUS[variante];
+    if (!v) throw new Error(`variante desconhecida: ${variante}`);
+    const [jids, extra] = v();
+    if (jids.some((j) => !j)) throw new Error('o leitor não conhece o próprio LID/número (ainda conectando?)');
+    return enviarStatus(buf, `TESTE ${variante}`, jids, extra);
+  }
+  const jids = todos ? audienciaDoBanco(db, lerConfigStatus() || AUDIENCIA_PADRAO, meuJid()) : [meuJid()];
+  await enviarStatus(buf, legenda || undefined, jids);
+}
+let conferindoStatus = false;
+async function conferirStatus() {
+  if (!conectado || conferindoStatus) return;
+  const cfg = lerConfigStatus();
+  if (!cfg) return;
+  conferindoStatus = true;
+  try { await verificarStatusDoDia({ db, cfg, meuJid: meuJid(), log, enviar: enviarStatus }); }
+  finally { conferindoStatus = false; }
+}
+setInterval(() => conferirStatus().catch((e) => log('erro no status', e.message)), 60_000);
+
 // ---------- conexão ----------
 let tentativas = 0;
 async function conectar() {
@@ -297,6 +354,7 @@ async function conectar() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const m of messages) {
       try {
+        if (m.key?.remoteJid === 'status@broadcast' && m.key.fromMe) log(`status nosso recebido de volta (id ${m.key.id})`); // diagnóstico
         const pu = desembrulhar(m.message)?.pollUpdateMessage;
         if (pu) { salvarVoto(m, pu); continue; }
         const nova = await salvar(m, { baixar: true });
@@ -314,6 +372,13 @@ async function conectar() {
     const baixar = syncType === 6;
     if (baixar) log(`histórico sob demanda recebido: ${messages.length} mensagem(ns)`);
     for (const m of messages) { try { await salvar(m, { baixar }); } catch {} }
+  });
+  // confirmações do WhatsApp para os status que postamos (diagnóstico: mostra se o servidor aceitou ou recusou)
+  sock.ev.on('messages.update', (ups) => {
+    for (const u of ups) if (u.key?.remoteJid === 'status@broadcast' && u.key.fromMe) log(`status ${u.key.id}: ${JSON.stringify(u.update)}`);
+  });
+  sock.ev.on('message-receipt.update', (rs) => {
+    for (const r of rs) if (r.key?.remoteJid === 'status@broadcast' && r.key.fromMe) log(`status ${r.key.id}: recibo ${JSON.stringify(r.receipt)}`);
   });
   sock.ev.on('presence.update', (p) => guardarPresenca(p).catch((e) => log('erro presença', e.message)));
   sock.ev.on('contacts.upsert', (cs) => cs.forEach(guardarContato));

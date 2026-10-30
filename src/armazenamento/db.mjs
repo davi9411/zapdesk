@@ -80,5 +80,7 @@ export function abrirDb() {
   db.exec('CREATE TABLE IF NOT EXISTS presenca (chat TEXT PRIMARY KEY, estado TEXT, ts INTEGER NOT NULL)');
   // avaliações dos clientes no fim do pré-atendimento (nota 0-5 pela enquete + comentário opcional)
   db.exec('CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT NOT NULL, nome TEXT, pedido_ts INTEGER NOT NULL, resumo TEXT, nota INTEGER, nota_ts INTEGER, comentario TEXT, comentario_ts INTEGER)');
+  // status do WhatsApp com o brief do dia (src/canais/status.mjs): um por dia, nunca repetido
+  db.exec('CREATE TABLE IF NOT EXISTS status_postado (data TEXT PRIMARY KEY, estado TEXT NOT NULL, tentativas INTEGER DEFAULT 0, ts INTEGER, n INTEGER DEFAULT 0, erro TEXT)');
   return db;
 }
