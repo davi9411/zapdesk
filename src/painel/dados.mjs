@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { PATHS } from '../config.mjs';
-import { normEtiqueta } from '../armazenamento/db.mjs';
+import { normEtiqueta, abrirDb } from '../armazenamento/db.mjs';
 import { processoVivo } from '../sistema.mjs';
 import { assumeTs, silenciada } from '../agente/controle.mjs';
 import { statusConversa, quemEscreveu, ehHumano, ehDoAgente } from './status.mjs';
@@ -13,6 +13,33 @@ const SO_PRIVADO = "jid NOT LIKE '%@g.us' AND jid NOT LIKE '%broadcast' AND jid 
 
 export function abrirLeitura(arq = PATHS.db) {
   return new DatabaseSync(arq, { readOnly: true });
+}
+
+// única porta de escrita do painel e do MCP: espera até 5 s se o leitor ou o agente estiverem gravando no mesmo instante
+export function abrirEscrita() {
+  const d = abrirDb();
+  d.exec('PRAGMA busy_timeout = 5000');
+  return d;
+}
+
+// acha a conversa por jid, número (só dígitos) ou parte do nome; mais de uma = erro com as opções
+export function acharConversa(db, termo) {
+  const t = String(termo || '').trim();
+  if (!t) throw new Error('Informe a conversa (nome, número ou jid).');
+  const priv = `${SO_PRIVADO}`;
+  const exato = db.prepare(`SELECT jid, nome FROM chats WHERE jid = ? AND ${priv}`).get(t);
+  if (exato) return exato;
+  const dig = t.replace(/\D/g, '');
+  const achados = dig.length >= 8
+    ? db.prepare(`SELECT jid, nome FROM chats WHERE jid LIKE ? AND ${priv} ORDER BY ultima_ts DESC`).all(`%${dig}%`)
+    : db.prepare(`SELECT jid, nome FROM chats WHERE nome LIKE ? AND ${priv} ORDER BY ultima_ts DESC LIMIT 8`).all(`%${t}%`);
+  if (!achados.length) throw new Error(`Nenhuma conversa encontrada para "${t}".`);
+  if (achados.length > 1) {
+    const exatoNome = achados.filter((c) => (c.nome || '').toLowerCase() === t.toLowerCase());
+    if (exatoNome.length === 1) return exatoNome[0];
+    throw new Error(`Mais de uma conversa para "${t}": ${achados.map((c) => `${c.nome || '(sem nome)'} (+${c.jid.split('@')[0]})`).join('; ')}. Use o número.`);
+  }
+  return achados[0];
 }
 
 export function lerConfig(dados = PATHS.data) {

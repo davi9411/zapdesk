@@ -6,8 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { abrirLeitura, lerConfig, listarConversas, detalharConversa, resumoDante, leitorVivo as leitorNoAr } from './dados.mjs';
-import { abrirDb } from '../armazenamento/db.mjs';
+import { abrirLeitura, lerConfig, listarConversas, detalharConversa, resumoDante, leitorVivo as leitorNoAr, abrirEscrita as abrirParaEscrever } from './dados.mjs';
 import { enfileirarEnvio, cancelarEnvio, ErroEnvio } from './envio.mjs';
 import { assumirDeVolta, silenciar, reativar, definirPausa } from '../agente/controle.mjs';
 
@@ -23,9 +22,6 @@ const json = (res, codigo, corpo) => {
   res.writeHead(codigo, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(corpo));
 };
-
-// espera até 5 s se o leitor ou o agente estiverem gravando no mesmo instante
-const abrirParaEscrever = () => { const d = abrirDb(); d.exec('PRAGMA busy_timeout = 5000'); return d; };
 
 const MAX_CORPO = 20_000;
 const lerCorpo = (req) => new Promise((ok, erro) => {
