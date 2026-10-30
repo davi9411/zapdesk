@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { abrirLeitura, lerConfig, listarConversas, detalharConversa, resumoDante, leitorVivo as leitorNoAr } from './dados.mjs';
 import { abrirDb } from '../armazenamento/db.mjs';
 import { enfileirarEnvio, cancelarEnvio, ErroEnvio } from './envio.mjs';
+import { assumirDeVolta, silenciar, reativar, definirPausa } from '../agente/controle.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
@@ -23,6 +24,9 @@ const json = (res, codigo, corpo) => {
   res.end(JSON.stringify(corpo));
 };
 
+// espera até 5 s se o leitor ou o agente estiverem gravando no mesmo instante
+const abrirParaEscrever = () => { const d = abrirDb(); d.exec('PRAGMA busy_timeout = 5000'); return d; };
+
 const MAX_CORPO = 20_000;
 const lerCorpo = (req) => new Promise((ok, erro) => {
   let n = 0; const partes = [];
@@ -31,7 +35,7 @@ const lerCorpo = (req) => new Promise((ok, erro) => {
   req.on('error', erro);
 });
 
-export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirDb, config = lerConfig, token = randomBytes(24).toString('hex'), leitorVivo = leitorNoAr } = {}) {
+export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirParaEscrever, config = lerConfig, token = randomBytes(24).toString('hex'), leitorVivo = leitorNoAr } = {}) {
   const srv = createServer(async (req, res) => {
     if (!hostPermitido(req.headers.host)) return json(res, 403, { erro: 'host não permitido' });
     const url = new URL(req.url, `http://${HOST}`);
@@ -69,11 +73,24 @@ export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirDb, co
       const corpo = await lerCorpo(req);
       if (url.pathname === '/api/enviar') {
         db = abrirEscrita();
-        return json(res, 200, enfileirarEnvio(db, { jid: corpo.jid, texto: corpo.texto, em: corpo.em, leitorVivo: leitorVivo() }));
+        return json(res, 200, enfileirarEnvio(db, { jid: corpo.jid, texto: corpo.texto, em: corpo.em, leitorVivo: leitorVivo(), danteContinua: corpo.danteContinua === true }));
       }
       if (url.pathname === '/api/cancelar') {
         db = abrirEscrita();
         return json(res, 200, cancelarEnvio(db, corpo.id));
+      }
+      if (['/api/assumir', '/api/silenciar', '/api/reativar'].includes(url.pathname)) {
+        db = abrirEscrita();
+        const chat = db.prepare('SELECT jid FROM chats WHERE jid = ?').get(String(corpo.jid || ''));
+        if (!chat) throw new ErroEnvio('Conversa não encontrada.', 404);
+        if (url.pathname === '/api/assumir') return json(res, 200, assumirDeVolta(db, chat.jid));
+        if (url.pathname === '/api/reativar') { reativar(db, chat.jid); return json(res, 200, { ok: true }); }
+        const horas = Number(corpo.horas) || 0; // 0 = até reativar
+        return json(res, 200, silenciar(db, chat.jid, horas > 0 ? Math.floor(Date.now() / 1000) + Math.round(horas * 3600) : 0));
+      }
+      if (url.pathname === '/api/pausar') {
+        db = abrirEscrita();
+        return json(res, 200, definirPausa(db, corpo.pausado === true));
       }
       return json(res, 404, { erro: 'não encontrado' });
     } catch (e) {

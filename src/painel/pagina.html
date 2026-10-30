@@ -73,6 +73,11 @@
   .linhaform input[type=datetime-local] { padding: 4px 6px; border: 1px solid var(--linha); border-radius: 6px; background: var(--fundo); color: var(--texto); font: inherit; font-size: 12px; }
   .enviar { border: 0; background: var(--texto); color: var(--painel); font: inherit; font-weight: 600; padding: 7px 16px; border-radius: 6px; cursor: pointer; }
   .enviar:disabled { opacity: .5; cursor: default; }
+  .acoes { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .btn { font: inherit; font-size: 12px; border: 1px solid var(--linha); background: transparent; color: var(--texto); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .btn:hover { background: var(--sel); }
+  .btn.perigo { border-color: var(--vermelho); color: var(--vermelho); }
+  .s-silenciado { color: var(--ambar); }
   .erro { color: var(--vermelho); font-size: 13px; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--linha); } }
 </style>
@@ -81,6 +86,7 @@
 <header>
   <h1>Zapdesk</h1>
   <div class="saude" id="saude">carregando…</div>
+  <button class="btn" id="pausa" style="margin-left:auto" title="Mesmo que PAUSAR/RETOMAR no WhatsApp pessoal">Pausar o Dante</button>
 </header>
 <main>
   <aside>
@@ -101,7 +107,8 @@
       <form class="resp" id="resp" style="display:none">
         <textarea id="texto" placeholder="Responder como Davi (Ctrl+Enter envia)"></textarea>
         <div class="linhaform">
-          <span class="aviso" id="avisoDante">Sai com o cabeçalho “Davi | CEO e Desenvolvedor DS Trade”. Ao enviar, o Dante para de responder este cliente por 12 h.</span>
+          <span class="aviso" id="avisoDante">Sai com o cabeçalho “Davi | CEO e Desenvolvedor DS Trade”. Ao enviar, o Dante para de responder este cliente por 12 h, a menos que você marque “Dante continua atendendo”.</span>
+          <label title="Marcado: a sua mensagem não faz o Dante parar de responder"><input type="checkbox" id="continua"> Dante continua atendendo</label>
           <label>Programar para <input type="datetime-local" id="quando"></label>
           <button class="enviar" id="enviar" type="submit">Enviar</button>
         </div>
@@ -114,7 +121,7 @@
 <script>
 const ROTULOS = {
   dante: 'Dante atendendo', 'vai-responder': 'Dante vai responder', 'esperando-cliente': 'Esperando o cliente',
-  equipe: 'Equipe atendendo', 'aguardando-equipe': 'Aguardando equipe', caso: 'Caso aberto', pausado: 'Pausado', fora: 'Fora do Dante', 'sem-dante': 'Sem Dante',
+  equipe: 'Equipe atendendo', 'aguardando-equipe': 'Aguardando equipe', caso: 'Caso aberto', pausado: 'Pausado', fora: 'Fora do Dante', 'sem-dante': 'Sem Dante', silenciado: 'Silenciado',
 };
 const $ = (id) => document.getElementById(id);
 const TOKEN = '__TOKEN__';
@@ -190,6 +197,18 @@ async function carregarConversa() {
   if (d.origem) meta.append(el('span', null, 'origem: ' + d.origem));
   if (d.etiquetas.length) meta.append(el('span', null, d.etiquetas.join(' · ')));
   cab.append(meta, el('div', 'meta', d.status.detalhe));
+  const acoes = el('div', 'acoes');
+  const botao = (rotulo, rota, corpo, cls) => {
+    const b = el('button', 'btn' + (cls ? ' ' + cls : ''), rotulo);
+    b.onclick = async () => { b.disabled = true; try { await post(rota, { jid: d.jid, ...corpo }); await ciclo(); } catch (e) { $('erroEnvio').textContent = e.message; } b.disabled = false; };
+    return b;
+  };
+  if (['equipe', 'aguardando-equipe'].includes(d.status.codigo)) acoes.append(botao('Dante assume de volta', '/api/assumir', {}));
+  if (d.status.codigo === 'silenciado') acoes.append(botao('Reativar o Dante nesta conversa', '/api/reativar', {}));
+  else if (d.status.codigo !== 'fora') {
+    acoes.append(botao('Silenciar o Dante aqui', '/api/silenciar', {}, 'perigo'), botao('Silenciar por 24 h', '/api/silenciar', { horas: 24 }));
+  }
+  cab.append(acoes);
   const corpo = $('msgs');
   const noFim = corpo.scrollHeight - corpo.scrollTop - corpo.clientHeight < 80;
   corpo.replaceChildren();
@@ -228,6 +247,9 @@ async function carregarDante() {
   s.append(ponto('Dante', d.agenteVivo), ponto('Leitor', d.leitorVivo));
   const p = el('span'); p.append(document.createTextNode('Atendimento ')); p.append(el('b', d.pausado ? 'ruim' : 'ok', d.pausado ? 'pausado' : 'ativo')); s.append(p);
   const f = Object.entries(d.fila).map(([k, v]) => `${v} ${k}`).join(', ');
+  $('pausa').textContent = d.pausado ? 'Retomar o Dante' : 'Pausar o Dante';
+  $('pausa').classList.toggle('perigo', !d.pausado);
+  estado.pausado = d.pausado;
   s.append(el('span', null, 'Fila: ' + (f || 'vazia')));
   s.append(el('span', null, 'Casos abertos: ' + d.casosAbertos.length));
 
@@ -263,14 +285,18 @@ $('resp').onsubmit = async (ev) => {
   const btn = $('enviar');
   btn.disabled = true; $('erroEnvio').textContent = '';
   try {
-    await post('/api/enviar', { jid: estado.atual, texto, em: q ? Math.floor(new Date(q).getTime() / 1000) : undefined });
-    $('texto').value = ''; $('quando').value = '';
+    await post('/api/enviar', { jid: estado.atual, texto, em: q ? Math.floor(new Date(q).getTime() / 1000) : undefined, danteContinua: $('continua').checked });
+    $('texto').value = ''; $('quando').value = ''; $('continua').checked = false;
     await carregarConversa();
     $('msgs').scrollTop = $('msgs').scrollHeight;
   } catch (e) { $('erroEnvio').textContent = e.message; }
   btn.disabled = false;
 };
 $('texto').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('resp').requestSubmit(); };
+$('pausa').onclick = async () => {
+  if (!estado.pausado && !confirm('Pausar o Dante? Ele para de responder TODOS os clientes até você retomar.')) return;
+  try { await post('/api/pausar', { pausado: !estado.pausado }); await ciclo(); } catch (e) { $('saude').textContent = e.message; }
+};
 $('busca').oninput = (e) => { estado.busca = e.target.value; desenharLista(); };
 
 async function ciclo() {

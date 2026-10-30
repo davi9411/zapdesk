@@ -34,6 +34,7 @@ import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
+import { criarTabelasControle, assumeTs, silenciada } from './agente/controle.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -79,6 +80,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_kv (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
+criarTabelasControle(db);
 for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT', 'escolha_pendente INTEGER DEFAULT 0', 'feedback_ts INTEGER DEFAULT 0', 'avaliar_apos_ts INTEGER DEFAULT 0', 'avaliar_resumo TEXT', 'momento_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
@@ -765,6 +767,7 @@ async function ciclo() {
       const numero = c.chat.split('@')[0];
       if (cfg.excluir.includes(numero) || (cfg.somente.length && !cfg.somente.includes(numero))) continue;
       if (ehPessoal(cfg, c.chat)) continue; // contato pessoal ou de outro robô: o agente não entra
+      if (silenciada(db, c.chat)) { estadoChat(c.chat); db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat); continue; } // silenciada pelo painel
       // o cliente preferiu aguardar uma pessoa: o agente não responde por 3 dias (o caso já foi para a equipe)
       const est = estadoChat(c.chat);
       if (est.escolha === 'humano' && agora() - est.prefere_humano_ts < 3 * 86400) {
@@ -796,12 +799,13 @@ async function ciclo() {
       }
       const aus = textoAusencia();
       // a última mensagem da conversa já é uma resposta da equipe: nada a fazer
-      const ultima = db.prepare('SELECT meu, texto FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(c.chat);
-      if (ultima?.meu && ehHumano(cfg, ultima.texto, aus)) { db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat); continue; }
+      const assume = assumeTs(db, c.chat); // painel: "Dante assume de volta" ignora a equipe até esse instante
+      const ultima = db.prepare('SELECT meu, texto, ts FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(c.chat);
+      if (ultima?.meu && ultima.ts > assume && ehHumano(cfg, ultima.texto, aus)) { db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat); continue; }
       // a equipe escreveu nessa conversa nas últimas horas? então ela está atendendo: o agente não responde
       // sozinho, só avisa o Davi (com sugestão) se o cliente ficar muito tempo sem resposta
       const desdeHumano = Math.max(iniS, agora() - cfg.humanoHoras * 3600);
-      const humano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts >= ?').all(c.chat, desdeHumano)
+      const humano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts >= ? AND ts > ?').all(c.chat, desdeHumano, assume)
         .some((m) => ehHumano(cfg, m.texto, aus));
       if (humano) {
         if (!e.humano) { db.prepare('UPDATE agente_chat SET humano = 1 WHERE chat = ?').run(c.chat); log(`equipe atendendo ${c.chat}: agente só sugere`); }

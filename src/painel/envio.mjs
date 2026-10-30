@@ -1,3 +1,5 @@
+import { assumirDeVolta } from '../agente/controle.mjs';
+
 // Envio pelo painel: só coloca na fila (outbox); quem manda de fato é o leitor, igual ao "wa enviar".
 export const CABECALHO_DAVI = '> *Davi* | CEO e Desenvolvedor DS Trade\n\n';
 export const MAX_TEXTO = 4000;
@@ -13,7 +15,7 @@ export const montarTexto = (texto) => {
 };
 
 // em: timestamp unix (s) de um envio programado, ou vazio para enviar já
-export function enfileirarEnvio(db, { jid, texto, em, agora = Math.floor(Date.now() / 1000), leitorVivo = true }) {
+export function enfileirarEnvio(db, { jid, texto, em, danteContinua = false, agora = Math.floor(Date.now() / 1000), leitorVivo = true }) {
   const t = String(texto || '').trim();
   if (!t) throw new ErroEnvio('Escreva a mensagem.');
   if (t.length > MAX_TEXTO) throw new ErroEnvio(`Mensagem grande demais (máximo ${MAX_TEXTO} caracteres).`);
@@ -30,7 +32,9 @@ export function enfileirarEnvio(db, { jid, texto, em, agora = Math.floor(Date.no
   }
   const r = db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, ?, NULL, ?, ?)')
     .run(chat.jid, chat.nome, montarTexto(t), quando, agora);
-  return { id: Number(r.lastInsertRowid), enviar_em: quando, programada: quando > agora };
+  // o Dante continua atendendo: a nossa mensagem (até 2 min depois do horário de envio) não conta como "equipe atendendo"
+  if (danteContinua) assumirDeVolta(db, chat.jid, quando + 120);
+  return { id: Number(r.lastInsertRowid), enviar_em: quando, programada: quando > agora, danteContinua: !!danteContinua };
 }
 
 // cancela só o que ainda não saiu

@@ -195,3 +195,70 @@ test('painel: POST exige token, origem local e JSON; envia e cancela pela API', 
     assert.match(await (await fetch(url + '/')).text(), /const TOKEN = 'segredo'/);
   } finally { srv.close(); db.close(); }
 });
+
+import { assumirDeVolta, silenciar, reativar, definirPausa, silenciada, assumeTs } from '../src/agente/controle.mjs';
+
+test('controle: assumir de volta ignora a equipe antes do instante; silêncio vence e pode expirar', () => {
+  const { db, dados } = bancoDeTeste();
+  const cfg = lerConfig(dados);
+  chat(db, 'c@s.whatsapp.net', 'Caio'); msg(db, 'c@s.whatsapp.net', 1, agora - 900, 0, 'oi'); msg(db, 'c@s.whatsapp.net', 2, agora - 800, 1, 'Aqui é a equipe');
+  db.prepare('INSERT INTO agente_chat (chat, ultimo_ts) VALUES (?, ?)').run('c@s.whatsapp.net', agora - 900);
+  const st = () => listarConversas(db, { cfg, agora, dados })[0].status.codigo;
+  assert.equal(st(), 'equipe');
+  assumirDeVolta(db, 'c@s.whatsapp.net', agora - 100);
+  assert.equal(assumeTs(db, 'c@s.whatsapp.net'), agora - 100);
+  assert.notEqual(st(), 'equipe');                      // volta para o Dante
+  msg(db, 'c@s.whatsapp.net', 3, agora - 50, 1, 'Mais uma da equipe'); // depois do "assume": conta de novo
+  assert.equal(st(), 'equipe');
+
+  silenciar(db, 'c@s.whatsapp.net', 0, agora);
+  assert.equal(st(), 'silenciado');
+  assert.deepEqual(silenciada(db, 'c@s.whatsapp.net', agora), { ate: 0 });
+  silenciar(db, 'c@s.whatsapp.net', agora + 10, agora);
+  assert.equal(silenciada(db, 'c@s.whatsapp.net', agora + 11), null); // venceu
+  silenciar(db, 'c@s.whatsapp.net', 0, agora);
+  reativar(db, 'c@s.whatsapp.net');
+  assert.equal(silenciada(db, 'c@s.whatsapp.net', agora), null);
+
+  definirPausa(db, true);
+  assert.equal(st(), 'pausado');
+  definirPausa(db, false);
+  assert.notEqual(st(), 'pausado');
+});
+
+test('envio: "Dante continua" faz a mensagem do painel não contar como equipe', () => {
+  const { db, dados } = bancoDeTeste();
+  const cfg = lerConfig(dados);
+  chat(db, 'a@s.whatsapp.net', 'Ana'); msg(db, 'a@s.whatsapp.net', 1, agora - 60, 0, 'oi');
+  db.prepare('INSERT INTO agente_chat (chat, ultimo_ts) VALUES (?, ?)').run('a@s.whatsapp.net', agora - 60);
+  enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'um instante', danteContinua: true, agora });
+  msg(db, 'a@s.whatsapp.net', 2, agora + 5, 1, CABECALHO_DAVI + 'um instante'); // o leitor enviou
+  assert.notEqual(listarConversas(db, { cfg, agora: agora + 10, dados })[0].status.codigo, 'equipe');
+});
+
+test('painel: rotas de controle exigem token e agem no banco', async () => {
+  const { db, dados } = bancoDeTeste();
+  chat(db, 'a@s.whatsapp.net', 'Ana');
+  const srv = criarServidor({
+    abrir: () => new DatabaseSync(join(dados, 'wa.db'), { readOnly: true }),
+    abrirEscrita: () => new DatabaseSync(join(dados, 'wa.db')),
+    config: () => lerConfig(dados), token: 't', leitorVivo: () => true,
+  });
+  await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const post = (rota, corpo, token = 't') => fetch(url + rota, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { 'x-painel-token': token } : {}) }, body: JSON.stringify(corpo) });
+  try {
+    assert.equal((await post('/api/pausar', { pausado: true }, null)).status, 403);
+    assert.equal((await post('/api/pausar', { pausado: true })).status, 200);
+    assert.equal(db.prepare("SELECT v FROM agente_kv WHERE k = 'pausado'").get().v, '1');
+    assert.equal((await post('/api/pausar', { pausado: false })).status, 200);
+    assert.equal((await post('/api/silenciar', { jid: 'a@s.whatsapp.net', horas: 2 })).status, 200);
+    const ate = db.prepare('SELECT ate FROM agente_silencio').get().ate;
+    assert.ok(ate > Date.now() / 1000 + 7000 && ate < Date.now() / 1000 + 7300);
+    assert.equal((await post('/api/reativar', { jid: 'a@s.whatsapp.net' })).status, 200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM agente_silencio').get().n, 0);
+    assert.equal((await post('/api/assumir', { jid: 'a@s.whatsapp.net' })).status, 200);
+    assert.ok(db.prepare('SELECT ts FROM agente_assume').get().ts > 0);
+    assert.equal((await post('/api/silenciar', { jid: 'nada@s.whatsapp.net' })).status, 404);
+  } finally { srv.close(); db.close(); }
+});

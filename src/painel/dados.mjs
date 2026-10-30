@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { PATHS } from '../config.mjs';
 import { normEtiqueta } from '../armazenamento/db.mjs';
 import { processoVivo } from '../sistema.mjs';
+import { assumeTs, silenciada } from '../agente/controle.mjs';
 import { statusConversa, quemEscreveu, ehHumano, ehDoAgente } from './status.mjs';
 
 const agoraS = () => Math.floor(Date.now() / 1000);
@@ -52,13 +53,14 @@ function fatos(db, cfg, avisos, chat, e, etiquetas, pausado, agora) {
   const ignorar = [cfg.etiquetaPessoal, ...(cfg.etiquetasIgnorar || [])].map(normEtiqueta);
   const fora = cfg.daviJids.includes(chat) || cfg.excluir.includes(numero) || etiquetas.some((n) => ignorar.includes(normEtiqueta(n)));
   const desde = Math.max(Math.floor(cfg.ini / 1000), agora - cfg.humanoHoras * 3600);
-  const humanoTs = db.prepare('SELECT texto, ts FROM msgs WHERE chat = ? AND meu = 1 AND ts >= ? ORDER BY ts DESC').all(chat, desde)
+  const assume = assumeTs(db, chat); // "Dante assume de volta": a equipe antes disso é ignorada
+  const humanoTs = db.prepare('SELECT texto, ts FROM msgs WHERE chat = ? AND meu = 1 AND ts >= ? AND ts > ? ORDER BY ts DESC').all(chat, desde, assume)
     .find((m) => ehHumano(cfg, m.texto, avisos))?.ts || 0;
   const casoAberto = temTabela(db, 'agente_caso')
     ? db.prepare("SELECT id FROM agente_caso WHERE chat = ? AND status = 'aberto' ORDER BY id DESC LIMIT 1").get(chat)?.id || null
     : null;
   const f = {
-    agora, pausado, fora, semEstado: !e,
+    agora, pausado, fora, semEstado: !e, silenciado: silenciada(db, chat, agora),
     escolhaHumanoTs: e?.escolha === 'humano' ? e.prefere_humano_ts : 0,
     humanoTs, humanoHoras: cfg.humanoHoras, casoAberto,
     pendente: ultCliente > (e?.ultimo_ts || 0) && ultCliente >= Math.floor(cfg.ini / 1000) && !!ult && !ult.meu,

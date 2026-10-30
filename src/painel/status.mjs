@@ -4,6 +4,7 @@
 export const STATUS = {
   fora: { rotulo: 'Fora do Dante', detalhe: 'Etiqueta pessoal/outro robô, número excluído ou conta do dono' },
   pausado: { rotulo: 'Pausado', detalhe: 'O Dante está pausado (PAUSAR no WhatsApp pessoal)' },
+  silenciado: { rotulo: 'Dante silenciado', detalhe: 'Você silenciou o Dante nesta conversa: ele não responde nem sugere' },
   'aguardando-equipe': { rotulo: 'Aguardando equipe', detalhe: 'O cliente escolheu falar com uma pessoa; o Dante fica quieto por 3 dias' },
   equipe: { rotulo: 'Equipe atendendo', detalhe: 'Alguém da equipe escreveu; o Dante só sugere se o cliente ficar sem resposta' },
   'vai-responder': { rotulo: 'Dante vai responder', detalhe: 'Mensagem do cliente ainda não processada' },
@@ -36,11 +37,12 @@ export function quemEscreveu(cfg, m, avisos = []) {
   return 'EQUIPE';
 }
 
-// f: { agora (s), pausado, fora, semEstado (o agente nunca tocou na conversa), escolhaHumanoTs, humanoTs, humanoHoras, casoAberto, pendente, ultimaDoAgente }
+// f: { agora (s), pausado, silenciado ({ate}|null), fora, semEstado (o agente nunca tocou na conversa), escolhaHumanoTs, humanoTs, humanoHoras, casoAberto, pendente, ultimaDoAgente }
 export function statusConversa(f) {
   const r = (codigo, ate) => ({ codigo, ...STATUS[codigo], ...(ate ? { ate } : {}) });
   if (f.fora) return r('fora');
   if (f.pausado) return r('pausado');
+  if (f.silenciado) return r('silenciado', f.silenciado.ate || undefined);
   if (f.escolhaHumanoTs && f.agora - f.escolhaHumanoTs < 3 * DIA) return r('aguardando-equipe', f.escolhaHumanoTs + 3 * DIA);
   const humanoAte = f.humanoTs ? f.humanoTs + (f.humanoHoras ?? 12) * 3600 : 0;
   if (humanoAte > f.agora) return r('equipe', humanoAte);
