@@ -3,6 +3,8 @@
 import { listarConversas, detalharConversa, resumoDante, acharConversa } from '../painel/dados.mjs';
 import { enfileirarEnvio, cancelarEnvio } from '../painel/envio.mjs';
 import { assumirDeVolta, silenciar, reativar, definirPausa } from '../agente/controle.mjs';
+import { criarRotina, alternarRotina, apagarRotina, listarRotinas } from '../regras/rotinas.mjs';
+import { registrar } from '../painel/auditoria.mjs';
 
 const hora = (ts) => (ts ? new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 const usando = (abrir, f) => { const db = abrir(); try { return f(db); } finally { try { db.close(); } catch {} } };
@@ -72,7 +74,7 @@ export const FERRAMENTAS = [
       }
       return usando(ctx.escrever, (db) => {
         const c = acharConversa(db, a.chat);
-        const r = enfileirarEnvio(db, { jid: c.jid, texto: a.texto, em, danteContinua: a.dante_continua === true, leitorVivo: ctx.leitorVivo() });
+        const r = enfileirarEnvio(db, { jid: c.jid, texto: a.texto, em, danteContinua: a.dante_continua === true, origem: 'mcp', leitorVivo: ctx.leitorVivo() });
         return `${r.programada ? `Programada para ${hora(r.enviar_em)}` : 'Na fila para envio agora'}: #${r.id} → ${c.nome || c.jid}${r.danteContinua ? ' (o Dante continua atendendo)' : ' (o Dante para por 12 h nesta conversa)'}`;
       });
     },
@@ -93,7 +95,7 @@ export const FERRAMENTAS = [
     name: 'zapdesk_cancelar',
     description: 'Cancela uma mensagem da fila que ainda não saiu (pelo número #id).',
     inputSchema: { type: 'object', properties: { id: { type: 'number', description: 'Número da mensagem na fila' } }, required: ['id'] },
-    rodar(a, ctx) { return usando(ctx.escrever, (db) => { cancelarEnvio(db, a.id); return `Mensagem #${a.id} cancelada.`; }); },
+    rodar(a, ctx) { return usando(ctx.escrever, (db) => { cancelarEnvio(db, a.id); registrar(db, { origem: 'mcp', acao: 'cancelar', detalhe: `#${a.id}` }); return `Mensagem #${a.id} cancelada.`; }); },
   },
   {
     name: 'zapdesk_dante',
@@ -105,14 +107,49 @@ export const FERRAMENTAS = [
     }, required: ['acao'] },
     rodar(a, ctx) {
       return usando(ctx.escrever, (db) => {
-        if (a.acao === 'pausar' || a.acao === 'retomar') { definirPausa(db, a.acao === 'pausar'); return a.acao === 'pausar' ? 'Dante PAUSADO para todos os clientes.' : 'Dante retomado.'; }
+        if (a.acao === 'pausar' || a.acao === 'retomar') { registrar(db, { origem: 'mcp', acao: a.acao }); definirPausa(db, a.acao === 'pausar'); return a.acao === 'pausar' ? 'Dante PAUSADO para todos os clientes.' : 'Dante retomado.'; }
         if (!['assumir', 'silenciar', 'reativar'].includes(a.acao)) throw new Error('Ação inválida.');
         const c = acharConversa(db, a.chat);
+        registrar(db, { origem: 'mcp', acao: a.acao, chat: c.jid, detalhe: a.horas ? `${a.horas} h` : null });
         if (a.acao === 'assumir') { assumirDeVolta(db, c.jid); return `Dante assume de volta: ${c.nome}.`; }
         if (a.acao === 'reativar') { reativar(db, c.jid); return `Dante reativado em ${c.nome}.`; }
         const h = Number(a.horas) || 0;
         silenciar(db, c.jid, h > 0 ? Math.floor(Date.now() / 1000) + Math.round(h * 3600) : 0);
         return `Dante silenciado em ${c.nome}${h > 0 ? ` por ${h} h` : ' até reativar'}.`;
+      });
+    },
+  },
+  {
+    name: 'zapdesk_rotinas',
+    description: 'Rotinas recorrentes de mensagem (ex.: toda segunda e quinta às 09:00 para um cliente). Ações: "listar", "criar" (chat, texto, dias, hora; ate e dante_continua opcionais), "pausar", "retomar" e "apagar" (id). A mensagem sai como o Davi, com o cabeçalho padrão. CRIE SÓ QUANDO O DAVI PEDIR e confirme destinatário, texto, dias e hora antes. O agente Dante dispara na hora; se estiver parado por mais de 30 min a ocorrência é pulada.',
+    inputSchema: { type: 'object', properties: {
+      acao: { type: 'string', enum: ['listar', 'criar', 'pausar', 'retomar', 'apagar'] },
+      ...chatArg,
+      texto: { type: 'string', description: 'Texto da mensagem, sem o cabeçalho' },
+      dias: { type: 'array', items: { type: 'number' }, description: 'Dias da semana: 0=domingo, 1=segunda ... 6=sábado' },
+      hora: { type: 'string', description: 'HH:MM, hora local' },
+      ate: { type: 'string', description: 'Opcional: AAAA-MM-DD, última data em que a rotina vale' },
+      dante_continua: { type: 'boolean', description: 'Padrão true: a mensagem automática não faz o Dante parar de atender o cliente' },
+      id: { type: 'number', description: 'Número da rotina (pausar, retomar, apagar)' },
+    }, required: ['acao'] },
+    rodar(a, ctx) {
+      const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-');
+      if (a.acao === 'listar') {
+        const l = usando(ctx.ler, (db) => listarRotinas(db));
+        return l.length ? l.map((r) => `#${r.id} [${r.ativa ? 'ativa' : 'pausada'}] ${r.nome || r.chat} | ${r.dias_nomes} ${r.hora}${r.ate ? ` até ${r.ate}` : ''} | próxima: ${fmt(r.proxima)} | ${r.texto.replace(/\s+/g, ' ').slice(0, 60)}`).join('\n') : 'Nenhuma rotina.';
+      }
+      return usando(ctx.escrever, (db) => {
+        if (a.acao === 'criar') {
+          const c = acharConversa(db, a.chat);
+          const r = criarRotina(db, { jid: c.jid, texto: a.texto, dias: a.dias, hora: a.hora, ate: a.ate, danteContinua: a.dante_continua !== false });
+          registrar(db, { origem: 'mcp', acao: 'rotina-criar', chat: c.jid, detalhe: `#${r.id} ${a.hora}` });
+          return `Rotina #${r.id} criada para ${c.nome}.`;
+        }
+        if (!['pausar', 'retomar', 'apagar'].includes(a.acao)) throw new Error('Ação inválida.');
+        registrar(db, { origem: 'mcp', acao: `rotina-${a.acao}`, detalhe: `#${a.id}` });
+        if (a.acao === 'apagar') { apagarRotina(db, a.id); return `Rotina #${a.id} apagada.`; }
+        alternarRotina(db, a.id, a.acao === 'retomar');
+        return `Rotina #${a.id} ${a.acao === 'retomar' ? 'retomada' : 'pausada'}.`;
       });
     },
   },

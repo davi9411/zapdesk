@@ -1,4 +1,5 @@
 import { assumirDeVolta } from '../agente/controle.mjs';
+import { registrar, enviosRecentes, MAX_ENVIOS_10MIN } from './auditoria.mjs';
 
 // Envio pelo painel: só coloca na fila (outbox); quem manda de fato é o leitor, igual ao "wa enviar".
 export const CABECALHO_DAVI = '> *Davi* | CEO e Desenvolvedor DS Trade\n\n';
@@ -15,12 +16,13 @@ export const montarTexto = (texto) => {
 };
 
 // em: timestamp unix (s) de um envio programado, ou vazio para enviar já
-export function enfileirarEnvio(db, { jid, texto, em, danteContinua = false, agora = Math.floor(Date.now() / 1000), leitorVivo = true }) {
+export function enfileirarEnvio(db, { jid, texto, em, danteContinua = false, origem = 'painel', agora = Math.floor(Date.now() / 1000), leitorVivo = true }) {
   const t = String(texto || '').trim();
   if (!t) throw new ErroEnvio('Escreva a mensagem.');
   if (t.length > MAX_TEXTO) throw new ErroEnvio(`Mensagem grande demais (máximo ${MAX_TEXTO} caracteres).`);
   const chat = db.prepare('SELECT jid, nome FROM chats WHERE jid = ?').get(jid);
   if (!chat) throw new ErroEnvio('Conversa não encontrada.', 404);
+  if (enviosRecentes(db, agora) >= MAX_ENVIOS_10MIN) throw new ErroEnvio(`Limite de ${MAX_ENVIOS_10MIN} envios em 10 minutos atingido. Espere um pouco.`, 429);
   if (/@g\.us$|broadcast$|@newsletter$/.test(chat.jid)) throw new ErroEnvio('O painel só envia para conversas privadas.');
   let quando = agora;
   if (em != null && em !== '') {
@@ -32,6 +34,7 @@ export function enfileirarEnvio(db, { jid, texto, em, danteContinua = false, ago
   }
   const r = db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, ?, NULL, ?, ?)')
     .run(chat.jid, chat.nome, montarTexto(t), quando, agora);
+  registrar(db, { origem, acao: 'enviar', chat: chat.jid, detalhe: `${quando > agora ? 'programada' : 'agora'}: ${t.slice(0, 80)}`, agora });
   // o Dante continua atendendo: a nossa mensagem (até 2 min depois do horário de envio) não conta como "equipe atendendo"
   if (danteContinua) assumirDeVolta(db, chat.jid, quando + 120);
   return { id: Number(r.lastInsertRowid), enviar_em: quando, programada: quando > agora, danteContinua: !!danteContinua };

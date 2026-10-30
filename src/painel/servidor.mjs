@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { abrirLeitura, lerConfig, listarConversas, detalharConversa, resumoDante, leitorVivo as leitorNoAr, abrirEscrita as abrirParaEscrever } from './dados.mjs';
 import { enfileirarEnvio, cancelarEnvio, ErroEnvio } from './envio.mjs';
 import { assumirDeVolta, silenciar, reativar, definirPausa } from '../agente/controle.mjs';
+import { criarRotina, alternarRotina, apagarRotina, listarRotinas } from '../regras/rotinas.mjs';
+import { registrar } from './auditoria.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
@@ -50,6 +52,7 @@ export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirParaEs
         return d ? json(res, 200, d) : json(res, 404, { erro: 'conversa não encontrada' });
       }
       if (url.pathname === '/api/dante') return json(res, 200, resumoDante(db));
+      if (url.pathname === '/api/rotinas') return json(res, 200, listarRotinas(db));
       return json(res, 404, { erro: 'não encontrado' });
     } catch (e) {
       return json(res, 500, { erro: e.message });
@@ -73,24 +76,40 @@ export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirParaEs
       }
       if (url.pathname === '/api/cancelar') {
         db = abrirEscrita();
+        registrar(db, { acao: 'cancelar', detalhe: `#${corpo.id}` });
         return json(res, 200, cancelarEnvio(db, corpo.id));
       }
       if (['/api/assumir', '/api/silenciar', '/api/reativar'].includes(url.pathname)) {
         db = abrirEscrita();
         const chat = db.prepare('SELECT jid FROM chats WHERE jid = ?').get(String(corpo.jid || ''));
         if (!chat) throw new ErroEnvio('Conversa não encontrada.', 404);
-        if (url.pathname === '/api/assumir') return json(res, 200, assumirDeVolta(db, chat.jid));
-        if (url.pathname === '/api/reativar') { reativar(db, chat.jid); return json(res, 200, { ok: true }); }
+        const acao = url.pathname.slice(5);
+        if (url.pathname === '/api/assumir') { registrar(db, { acao, chat: chat.jid }); return json(res, 200, assumirDeVolta(db, chat.jid)); }
+        if (url.pathname === '/api/reativar') { registrar(db, { acao, chat: chat.jid }); reativar(db, chat.jid); return json(res, 200, { ok: true }); }
         const horas = Number(corpo.horas) || 0; // 0 = até reativar
+        registrar(db, { acao, chat: chat.jid, detalhe: horas > 0 ? `${horas} h` : 'até reativar' });
         return json(res, 200, silenciar(db, chat.jid, horas > 0 ? Math.floor(Date.now() / 1000) + Math.round(horas * 3600) : 0));
+      }
+      if (url.pathname === '/api/rotinas') {
+        db = abrirEscrita();
+        const r = criarRotina(db, { jid: corpo.jid, texto: corpo.texto, dias: corpo.dias, hora: corpo.hora, ate: corpo.ate, danteContinua: corpo.danteContinua !== false });
+        registrar(db, { acao: 'rotina-criar', chat: corpo.jid, detalhe: `#${r.id} ${corpo.hora} dias ${(corpo.dias || []).join?.(',') ?? corpo.dias}` });
+        return json(res, 200, r);
+      }
+      if (url.pathname === '/api/rotinas/alternar' || url.pathname === '/api/rotinas/apagar') {
+        db = abrirEscrita();
+        const apagar = url.pathname.endsWith('apagar');
+        registrar(db, { acao: apagar ? 'rotina-apagar' : 'rotina-alternar', detalhe: `#${corpo.id}` });
+        return json(res, 200, apagar ? apagarRotina(db, corpo.id) : alternarRotina(db, corpo.id, corpo.ativa === true));
       }
       if (url.pathname === '/api/pausar') {
         db = abrirEscrita();
+        registrar(db, { acao: corpo.pausado === true ? 'pausar' : 'retomar' });
         return json(res, 200, definirPausa(db, corpo.pausado === true));
       }
       return json(res, 404, { erro: 'não encontrado' });
     } catch (e) {
-      return json(res, e instanceof ErroEnvio ? e.codigo : 500, { erro: e.message });
+      return json(res, e instanceof ErroEnvio ? e.codigo : e.codigo || (/inválid|Escolha|Escreva|grande demais|privadas/.test(e.message) ? 400 : 500), { erro: e.message });
     } finally { try { db?.close(); } catch {} }
   }
   return srv;

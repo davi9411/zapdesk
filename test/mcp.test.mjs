@@ -41,7 +41,7 @@ test('mcp: initialize, ping, lista de ferramentas e método desconhecido', () =>
   assert.equal(ini.result.protocolVersion, '2025-03-26');
   assert.deepEqual(tratar({ jsonrpc: '2.0', id: 2, method: 'ping' }).result, {});
   const nomes = tratar({ jsonrpc: '2.0', id: 3, method: 'tools/list' }).result.tools.map((t) => t.name);
-  for (const n of ['zapdesk_conversas', 'zapdesk_ler', 'zapdesk_status', 'zapdesk_enviar', 'zapdesk_fila', 'zapdesk_cancelar', 'zapdesk_dante']) assert.ok(nomes.includes(n), n);
+  for (const n of ['zapdesk_conversas', 'zapdesk_ler', 'zapdesk_status', 'zapdesk_enviar', 'zapdesk_fila', 'zapdesk_cancelar', 'zapdesk_dante', 'zapdesk_rotinas']) assert.ok(nomes.includes(n), n);
   assert.equal(tratar({ jsonrpc: '2.0', id: 4, method: 'nada' }).error.code, -32601);
   assert.equal(tratar({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 });
@@ -107,5 +107,5 @@ test('mcp: processo real responde no stdio', async () => {
   await new Promise((ok) => { const t = setInterval(() => { if (linhas.length >= 2) { clearInterval(t); ok(); } }, 50); setTimeout(ok, 8000); });
   p.kill();
   assert.equal(linhas.length, 2);
-  assert.equal(JSON.parse(linhas[1]).result.tools.length, 7);
+  assert.equal(JSON.parse(linhas[1]).result.tools.length, 8);
 });

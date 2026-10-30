@@ -100,6 +100,7 @@
     <div class="abas" role="tablist">
       <button class="aba" role="tab" id="aba-conversa" aria-selected="true">Conversa</button>
       <button class="aba" role="tab" id="aba-dante" aria-selected="false">Dante</button>
+      <button class="aba" role="tab" id="aba-rotinas" aria-selected="false">Rotinas</button>
     </div>
     <div id="painel-conversa" style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="cab" id="cab"><span class="meta">Escolha uma conversa à esquerda.</span></div>
@@ -116,6 +117,7 @@
       </form>
     </div>
     <div class="caixa" id="painel-dante" style="display:none"></div>
+    <div class="caixa" id="painel-rotinas" style="display:none"></div>
   </section>
 </main>
 <script>
@@ -264,17 +266,71 @@ async function carregarDante() {
   }
   const c2 = el('div', 'cartao'); c2.append(el('h3', null, 'Log do agente (últimas linhas)'));
   const pre = el('pre', null, d.log.join('\n') || 'sem log'); c2.append(pre);
-  caixa.append(c1, c2);
+  const c3 = el('div', 'cartao'); c3.append(el('h3', null, 'Ações feitas pelo painel e pelo Claude (últimas)'));
+  c3.append(el('pre', null, (d.auditoria || []).map((a) => `${hora(a.ts)}  ${a.origem}  ${a.acao}${a.detalhe ? '  ' + a.detalhe : ''}`).join('
+') || 'nada ainda'));
+  caixa.append(c1, c3, c2);
+}
+
+const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+async function carregarRotinas() {
+  const lista = await api('/api/rotinas');
+  const caixa = $('painel-rotinas');
+  if (caixa.contains(document.activeElement) && document.activeElement.matches('input, textarea, select')) return; // não atrapalha quem está digitando
+  caixa.replaceChildren();
+
+  const f = el('form', 'cartao');
+  f.append(el('h3', null, 'Nova rotina (a mensagem sai como Davi, no dia e hora escolhidos)'));
+  const sel = el('select'); sel.id = 'rotChat';
+  for (const c of estado.conversas.filter((x) => x.status.codigo !== 'fora')) { const o = el('option', null, `${c.nome} (+${c.numero})`); o.value = c.jid; sel.append(o); }
+  const texto = el('textarea'); texto.id = 'rotTexto'; texto.placeholder = 'Mensagem'; texto.style.cssText = 'width:100%;min-height:56px;padding:8px;border:1px solid var(--linha);border-radius:6px;background:var(--fundo);color:var(--texto);font:inherit';
+  const dias = el('div', 'linhaform');
+  DIAS.forEach((n, i) => { const l = el('label'); const c = el('input'); c.type = 'checkbox'; c.value = i; c.className = 'rotDia'; l.append(c, document.createTextNode(n)); dias.append(l); });
+  const hora_ = el('input'); hora_.type = 'time'; hora_.id = 'rotHora'; hora_.value = '09:00';
+  const ate = el('input'); ate.type = 'date'; ate.id = 'rotAte';
+  const cont = el('input'); cont.type = 'checkbox'; cont.id = 'rotCont'; cont.checked = true;
+  const linha = el('div', 'linhaform');
+  const l1 = el('label'); l1.append(document.createTextNode('Hora '), hora_);
+  const l2 = el('label'); l2.append(document.createTextNode('Até (opcional) '), ate);
+  const l3 = el('label'); l3.append(cont, document.createTextNode('Dante continua atendendo'));
+  const ok = el('button', 'enviar', 'Criar rotina'); ok.type = 'submit';
+  linha.append(l1, l2, l3, ok);
+  const erro = el('div', 'erro');
+  f.append(sel, texto, dias, linha, erro);
+  f.onsubmit = async (ev) => {
+    ev.preventDefault(); erro.textContent = '';
+    try {
+      await post('/api/rotinas', { jid: sel.value, texto: texto.value, dias: [...document.querySelectorAll('.rotDia')].filter((c) => c.checked).map((c) => Number(c.value)), hora: hora_.value, ate: ate.value || undefined, danteContinua: cont.checked });
+      await carregarRotinas();
+    } catch (e) { erro.textContent = e.message; }
+  };
+  caixa.append(f);
+
+  const c = el('div', 'cartao'); c.append(el('h3', null, `Rotinas (${lista.length})`));
+  if (!lista.length) c.append(el('div', 'meta', 'Nenhuma rotina criada.'));
+  for (const r of lista) {
+    const item = el('div'); item.style.cssText = 'padding:8px 0;border-top:1px solid var(--linha)';
+    item.append(el('div', null, `${r.nome || r.chat} · ${r.dias_nomes} às ${r.hora}${r.ate ? ' até ' + r.ate.split('-').reverse().join('/') : ''}${r.ativa ? '' : ' · PAUSADA'}`));
+    item.append(el('div', 'meta', (r.ativa && r.proxima ? 'próxima: ' + hora(r.proxima) + ' · ' : '') + r.texto.slice(0, 120)));
+    const ac = el('div', 'acoes');
+    const b1 = el('button', 'btn', r.ativa ? 'Pausar' : 'Retomar'); b1.onclick = async () => { await post('/api/rotinas/alternar', { id: r.id, ativa: !r.ativa }); carregarRotinas(); };
+    const b2 = el('button', 'btn perigo', 'Apagar'); b2.onclick = async () => { if (confirm('Apagar esta rotina?')) { await post('/api/rotinas/apagar', { id: r.id }); carregarRotinas(); } };
+    ac.append(b1, b2); item.append(ac); c.append(item);
+  }
+  caixa.append(c);
 }
 
 function mostrar(aba) {
   estado.aba = aba;
   $('aba-conversa').setAttribute('aria-selected', aba === 'conversa');
   $('aba-dante').setAttribute('aria-selected', aba === 'dante');
+  $('aba-rotinas').setAttribute('aria-selected', aba === 'rotinas');
+  $('painel-rotinas').style.display = aba === 'rotinas' ? 'grid' : 'none';
   $('painel-conversa').style.display = aba === 'conversa' ? 'flex' : 'none';
   $('painel-dante').style.display = aba === 'dante' ? 'grid' : 'none';
 }
 $('aba-conversa').onclick = () => mostrar('conversa');
+$('aba-rotinas').onclick = () => { mostrar('rotinas'); carregarRotinas().catch(() => {}); };
 $('aba-dante').onclick = () => { mostrar('dante'); carregarDante().catch(() => {}); };
 $('resp').onsubmit = async (ev) => {
   ev.preventDefault();

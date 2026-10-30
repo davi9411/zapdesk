@@ -6,6 +6,7 @@ import { PATHS } from '../config.mjs';
 import { normEtiqueta, abrirDb } from '../armazenamento/db.mjs';
 import { processoVivo } from '../sistema.mjs';
 import { assumeTs, silenciada } from '../agente/controle.mjs';
+import { ultimos as ultimaAuditoria } from './auditoria.mjs';
 import { statusConversa, quemEscreveu, ehHumano, ehDoAgente } from './status.mjs';
 
 const agoraS = () => Math.floor(Date.now() / 1000);
@@ -166,5 +167,6 @@ export function resumoDante(db, { dados = PATHS.data, linhas = 40 } = {}) {
     casosAbertos: abertos,
     fila: Object.fromEntries(fila.map((r) => [r.status, r.n])),
     log: cauda(join(dados, 'agente.log'), linhas),
+    auditoria: ultimaAuditoria(db, 15),
   };
 }

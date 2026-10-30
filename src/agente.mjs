@@ -35,6 +35,7 @@ import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada } from './agente/controle.mjs';
+import { gerarRotinas } from './regras/rotinas.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -735,6 +736,7 @@ async function ciclo() {
     const cfg = lerCfg();
     vigiarLeitor(cfg);
     pingar(cfg);
+    try { const n = gerarRotinas(db); if (n) log(`rotinas: ${n} mensagem(ns) na fila`); } catch (e) { log('erro nas rotinas', e.message); }
     if (!cfg || Date.now() < cfg.ini || Date.now() > cfg.fim) return;
     const iniS = Math.floor(cfg.ini / 1000);
 
