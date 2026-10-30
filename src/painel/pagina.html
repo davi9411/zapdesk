@@ -62,6 +62,18 @@
   .cartao { border: 1px solid var(--linha); background: var(--painel); border-radius: 8px; padding: 10px 12px; }
   .cartao h3 { margin: 0 0 6px; font-size: 13px; }
   pre { margin: 0; font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--suave); }
+  .msg.fila { align-self: flex-end; background: transparent; border-style: dashed; }
+  .msg.fila.falhou { border-color: var(--vermelho); }
+  .msg button { margin-left: 8px; font: inherit; font-size: 12px; border: 1px solid var(--linha); background: transparent; color: var(--texto); border-radius: 4px; padding: 1px 7px; cursor: pointer; }
+  form.resp { border-top: 1px solid var(--linha); background: var(--painel); padding: 10px 16px; display: grid; gap: 8px; }
+  form.resp textarea { width: 100%; min-height: 64px; max-height: 220px; resize: vertical; padding: 8px 10px; border: 1px solid var(--linha); border-radius: 6px; background: var(--fundo); color: var(--texto); font: inherit; }
+  .linhaform { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .linhaform .aviso { color: var(--suave); font-size: 12px; flex: 1; min-width: 200px; }
+  .linhaform label { color: var(--suave); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .linhaform input[type=datetime-local] { padding: 4px 6px; border: 1px solid var(--linha); border-radius: 6px; background: var(--fundo); color: var(--texto); font: inherit; font-size: 12px; }
+  .enviar { border: 0; background: var(--texto); color: var(--painel); font: inherit; font-weight: 600; padding: 7px 16px; border-radius: 6px; cursor: pointer; }
+  .enviar:disabled { opacity: .5; cursor: default; }
+  .erro { color: var(--vermelho); font-size: 13px; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--linha); } }
 </style>
 </head>
@@ -86,6 +98,15 @@
     <div id="painel-conversa" style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="cab" id="cab"><span class="meta">Escolha uma conversa à esquerda.</span></div>
       <div class="corpo" id="msgs"></div>
+      <form class="resp" id="resp" style="display:none">
+        <textarea id="texto" placeholder="Responder como Davi (Ctrl+Enter envia)"></textarea>
+        <div class="linhaform">
+          <span class="aviso" id="avisoDante">Sai com o cabeçalho “Davi | CEO e Desenvolvedor DS Trade”. Ao enviar, o Dante para de responder este cliente por 12 h.</span>
+          <label>Programar para <input type="datetime-local" id="quando"></label>
+          <button class="enviar" id="enviar" type="submit">Enviar</button>
+        </div>
+        <div class="erro" id="erroEnvio"></div>
+      </form>
     </div>
     <div class="caixa" id="painel-dante" style="display:none"></div>
   </section>
@@ -96,6 +117,7 @@ const ROTULOS = {
   equipe: 'Equipe atendendo', 'aguardando-equipe': 'Aguardando equipe', caso: 'Caso aberto', pausado: 'Pausado', fora: 'Fora do Dante', 'sem-dante': 'Sem Dante',
 };
 const $ = (id) => document.getElementById(id);
+const TOKEN = '__TOKEN__';
 const estado = { conversas: [], atual: null, filtro: new Set(), busca: '', aba: 'conversa' };
 
 const el = (tag, cls, texto) => { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; };
@@ -110,6 +132,12 @@ const restante = (ate) => {
   if (s <= 0) return '';
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h >= 24 ? `volta em ${Math.floor(h / 24)} d ${h % 24} h` : `volta em ${h} h ${m} min`;
+};
+const post = async (url, corpo) => {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-painel-token': TOKEN }, body: JSON.stringify(corpo) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.erro || r.status);
+  return j;
 };
 const api = async (url) => { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.json()).erro || r.status); return r.json(); };
 
@@ -173,7 +201,22 @@ async function carregarConversa() {
     b.append(document.createTextNode(t));
     corpo.append(b);
   }
-  if (noFim || !corpo.dataset.visto) corpo.scrollTop = corpo.scrollHeight;
+  for (const o of d.fila.filter((x) => !x.enquete)) {
+    const b = el('div', 'msg fila' + (o.status === 'falhou' || o.status === 'atrasada' ? ' falhou' : ''));
+    const quando = o.status === 'pendente' && o.enviar_em > Math.floor(Date.now() / 1000) + 5 ? 'programada para ' + hora(o.enviar_em)
+      : o.status === 'pendente' || o.status === 'enviando' ? 'enviando…' : o.status + (o.erro ? ': ' + o.erro : '');
+    b.append(el('small', null, quando));
+    b.append(document.createTextNode((o.texto || '').split('\n\n').slice(o.texto && o.texto.startsWith('> *Davi*') ? 1 : 0).join('\n\n')));
+    if (o.status === 'pendente') {
+      const c = el('button', null, 'Cancelar');
+      c.onclick = async () => { try { await post('/api/cancelar', { id: o.id }); carregarConversa(); } catch (e) { $('erroEnvio').textContent = e.message; } };
+      b.append(c);
+    }
+    corpo.append(b);
+  }
+  $('resp').style.display = 'grid';
+  if (noFim || !corpo.dataset.visto || corpo.dataset.jid !== d.jid) corpo.scrollTop = corpo.scrollHeight;
+  corpo.dataset.jid = d.jid;
   corpo.dataset.visto = '1';
 }
 
@@ -211,6 +254,23 @@ function mostrar(aba) {
 }
 $('aba-conversa').onclick = () => mostrar('conversa');
 $('aba-dante').onclick = () => { mostrar('dante'); carregarDante().catch(() => {}); };
+$('resp').onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (!estado.atual) return;
+  const texto = $('texto').value.trim();
+  if (!texto) return;
+  const q = $('quando').value;
+  const btn = $('enviar');
+  btn.disabled = true; $('erroEnvio').textContent = '';
+  try {
+    await post('/api/enviar', { jid: estado.atual, texto, em: q ? Math.floor(new Date(q).getTime() / 1000) : undefined });
+    $('texto').value = ''; $('quando').value = '';
+    await carregarConversa();
+    $('msgs').scrollTop = $('msgs').scrollHeight;
+  } catch (e) { $('erroEnvio').textContent = e.message; }
+  btn.disabled = false;
+};
+$('texto').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('resp').requestSubmit(); };
 $('busca').oninput = (e) => { estado.busca = e.target.value; desenharLista(); };
 
 async function ciclo() {

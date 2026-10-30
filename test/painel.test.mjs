@@ -49,7 +49,7 @@ function bancoDeTeste() {
     CREATE TABLE msgs (chat TEXT, id TEXT, ts INTEGER, meu INTEGER DEFAULT 0, de TEXT, tipo TEXT, texto TEXT, transcricao TEXT);
     CREATE TABLE etiquetas (id TEXT PRIMARY KEY, nome TEXT, cor INTEGER);
     CREATE TABLE etiqueta_chat (chat TEXT, etiqueta TEXT);
-    CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT);
+    CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT NOT NULL, nome TEXT, texto TEXT, arquivos TEXT, enviar_em INTEGER NOT NULL, criado INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pendente', enviado_em INTEGER, erro TEXT, enquete TEXT);
     CREATE TABLE agente_chat (chat TEXT PRIMARY KEY, ultimo_ts INTEGER DEFAULT 0, humano INTEGER DEFAULT 0, escolha TEXT, prefere_humano_ts INTEGER DEFAULT 0, nome_cliente TEXT, perfil TEXT, origem TEXT);
     CREATE TABLE agente_caso (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, nome TEXT, resumo TEXT, pergunta TEXT, status TEXT DEFAULT 'aberto', criado INTEGER, tipo TEXT);
     CREATE TABLE agente_kv (k TEXT PRIMARY KEY, v TEXT);
@@ -114,7 +114,7 @@ test('painel: servidor só aceita host local e só GET', async () => {
   try {
     const lista = await (await fetch(url + '/api/conversas')).json();
     assert.equal(lista[0].nome, 'Ana');
-    assert.equal((await fetch(url + '/api/conversas', { method: 'POST' })).status, 405);
+    assert.equal((await fetch(url + '/api/conversas', { method: 'PUT' })).status, 405);
     assert.equal((await fetch(url + '/api/conversas/nada%40s.whatsapp.net')).status, 404);
     assert.equal((await fetch(url + '/')).status, 200);
     const status = await new Promise((ok, erro) => {
@@ -122,5 +122,76 @@ test('painel: servidor só aceita host local e só GET', async () => {
       r.on('error', erro); r.end();
     });
     assert.equal(status, 403);
+  } finally { srv.close(); db.close(); }
+});
+
+import { enfileirarEnvio, cancelarEnvio, montarTexto, CABECALHO_DAVI } from '../src/painel/envio.mjs';
+
+const bancoComOutbox = bancoDeTeste;
+
+test('envio: texto ganha o cabeçalho do Davi e não duplica', () => {
+  assert.equal(montarTexto(' oi '), CABECALHO_DAVI + 'oi');
+  assert.equal(montarTexto('> *Davi* | CEO e Desenvolvedor DS Trade\n\noi'), '> *Davi* | CEO e Desenvolvedor DS Trade\n\noi');
+});
+
+test('envio: enfileira, programa, recusa vazio, grupo, hora passada e leitor desligado', () => {
+  const { db } = bancoComOutbox();
+  chat(db, 'a@s.whatsapp.net', 'Ana'); chat(db, 'g@g.us', 'Grupo');
+  const r = enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'oi', agora });
+  assert.equal(r.programada, false);
+  const linha = db.prepare('SELECT * FROM outbox WHERE id = ?').get(r.id);
+  assert.equal(linha.texto, CABECALHO_DAVI + 'oi');
+  assert.equal(linha.enviar_em, agora);
+  assert.equal(linha.status, 'pendente');
+
+  const p = enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'mais tarde', em: agora + 3600, agora, leitorVivo: false });
+  assert.equal(p.programada, true);
+
+  assert.throws(() => enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: '  ', agora }), /Escreva/);
+  assert.throws(() => enfileirarEnvio(db, { jid: 'g@g.us', texto: 'oi', agora }), /privadas/);
+  assert.throws(() => enfileirarEnvio(db, { jid: 'nada@s.whatsapp.net', texto: 'oi', agora }), /não encontrada/);
+  assert.throws(() => enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'oi', em: agora - 5, agora }), /já passou/);
+  assert.throws(() => enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'oi', agora, leitorVivo: false }), /leitor está desligado/);
+});
+
+test('envio: cancelar só vale para o que ainda está pendente', () => {
+  const { db } = bancoComOutbox();
+  chat(db, 'a@s.whatsapp.net', 'Ana');
+  const a = enfileirarEnvio(db, { jid: 'a@s.whatsapp.net', texto: 'x', em: agora + 3600, agora });
+  cancelarEnvio(db, a.id);
+  assert.equal(db.prepare('SELECT status FROM outbox WHERE id = ?').get(a.id).status, 'cancelada');
+  assert.throws(() => cancelarEnvio(db, a.id), /já saiu/);
+});
+
+test('painel: POST exige token, origem local e JSON; envia e cancela pela API', async () => {
+  const { db, dados } = bancoComOutbox();
+  chat(db, 'a@s.whatsapp.net', 'Ana');
+  const srv = criarServidor({
+    abrir: () => new DatabaseSync(join(dados, 'wa.db'), { readOnly: true }),
+    abrirEscrita: () => new DatabaseSync(join(dados, 'wa.db')),
+    config: () => lerConfig(dados), token: 'segredo', leitorVivo: () => true,
+  });
+  await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const post = (rota, corpo, headers = {}) => fetch(url + rota, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(corpo) });
+  try {
+    assert.equal((await post('/api/enviar', { jid: 'a@s.whatsapp.net', texto: 'oi' })).status, 403);                              // sem token
+    assert.equal((await post('/api/enviar', { jid: 'a@s.whatsapp.net', texto: 'oi' }, { 'x-painel-token': 'errado' })).status, 403);
+    assert.equal((await post('/api/enviar', { jid: 'a@s.whatsapp.net', texto: 'oi' }, { 'x-painel-token': 'segredo', origin: 'https://mal.com' })).status, 403);
+    const sem = await fetch(url + '/api/enviar', { method: 'POST', headers: { 'x-painel-token': 'segredo' }, body: 'x' });
+    assert.equal(sem.status, 415);
+
+    const ok = await post('/api/enviar', { jid: 'a@s.whatsapp.net', texto: 'oi' }, { 'x-painel-token': 'segredo', origin: url });
+    assert.equal(ok.status, 200);
+    const { id } = await ok.json();
+    assert.equal((await post('/api/enviar', { jid: 'a@s.whatsapp.net', texto: '' }, { 'x-painel-token': 'segredo' })).status, 400);
+
+    const det = await (await fetch(url + '/api/conversas/a%40s.whatsapp.net')).json();
+    assert.equal(det.fila.length, 1);
+    assert.equal(det.fila[0].id, id);
+    assert.equal((await post('/api/cancelar', { id }, { 'x-painel-token': 'segredo' })).status, 200);
+    assert.equal((await post('/api/cancelar', { id }, { 'x-painel-token': 'segredo' })).status, 409);
+    assert.equal((await fetch(url + '/')).headers.get('content-type').startsWith('text/html'), true);
+    assert.match(await (await fetch(url + '/')).text(), /const TOKEN = 'segredo'/);
   } finally { srv.close(); db.close(); }
 });

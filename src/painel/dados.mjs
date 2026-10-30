@@ -105,9 +105,13 @@ export function detalharConversa(db, jid, { cfg = lerConfig(), limite = 80, agor
   const casos = temTabela(db, 'agente_caso')
     ? db.prepare("SELECT id, resumo, pergunta, status, criado, tipo FROM agente_caso WHERE chat = ? ORDER BY id DESC LIMIT 10").all(jid)
     : [];
+  // o que ainda não saiu (ou falhou) nesta conversa: programadas, em envio e erros dos últimos 3 dias
+  const fila = db.prepare(`SELECT id, texto, enviar_em, status, erro, enquete IS NOT NULL AS enquete FROM outbox
+    WHERE chat = ? AND status IN ('pendente','enviando','falhou','atrasada') AND criado >= ? ORDER BY enviar_em, id`).all(jid, agora - 3 * 86400)
+    .map((o) => ({ ...o, enquete: !!o.enquete }));
   return {
     jid, numero: jid.split('@')[0], nome: c.nome || e?.nome_cliente || jid.split('@')[0],
-    etiquetas, perfil: e?.perfil || null, origem: e?.origem || null, status: statusConversa(f), msgs, casos,
+    etiquetas, perfil: e?.perfil || null, origem: e?.origem || null, status: statusConversa(f), msgs, casos, fila,
   };
 }
 
@@ -119,6 +123,8 @@ const pidVivo = (arq) => {
   try { return processoVivo(Number(readFileSync(arq, 'utf8').trim())); } catch { return false; }
 };
 
+export const leitorVivo = () => (existsSync(PATHS.pid) ? pidVivo(PATHS.pid) : false);
+
 export function resumoDante(db, { dados = PATHS.data, linhas = 40 } = {}) {
   const abertos = temTabela(db, 'agente_caso')
     ? db.prepare("SELECT id, chat, nome, resumo, pergunta, criado FROM agente_caso WHERE status = 'aberto' ORDER BY id DESC").all()
@@ -126,7 +132,7 @@ export function resumoDante(db, { dados = PATHS.data, linhas = 40 } = {}) {
   const fila = db.prepare("SELECT status, COUNT(*) n FROM outbox WHERE status IN ('pendente','enviando','falhou','atrasada') GROUP BY status").all();
   return {
     agenteVivo: pidVivo(join(dados, 'agente.pid')),
-    leitorVivo: existsSync(PATHS.pid) ? pidVivo(PATHS.pid) : false,
+    leitorVivo: leitorVivo(),
     pausado: kv(db, 'pausado') === '1',
     casosAbertos: abertos,
     fila: Object.fromEntries(fila.map((r) => [r.status, r.n])),
