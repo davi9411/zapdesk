@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zapdesk painel</title>
+<style>
+  :root {
+    --fundo: #f4f3ef; --painel: #ffffff; --linha: #dedbd2; --texto: #1d1c19; --suave: #6b685f;
+    --sel: #ece9df; --cliente: #ffffff; --dante: #dff0e4; --equipe: #e3e8f6; --aviso: #f0ece0;
+    --verde: #1f7a3f; --azul: #2b57b8; --ambar: #96620c; --vermelho: #a93434; --cinza: #6b685f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #14140f; --painel: #1d1d17; --linha: #343429; --texto: #ecebe4; --suave: #a09d90;
+      --sel: #2a2a21; --cliente: #26261e; --dante: #1d3a27; --equipe: #232d4a; --aviso: #2e2b1f;
+      --verde: #5fcf86; --azul: #8aa8f0; --ambar: #e0ab55; --vermelho: #ee8080; --cinza: #a09d90;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--texto); font: 14px/1.4 system-ui, 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--linha); background: var(--painel); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  .saude { display: flex; gap: 14px; color: var(--suave); font-size: 13px; flex-wrap: wrap; }
+  .saude b { color: var(--texto); font-weight: 600; }
+  .ok { color: var(--verde); } .ruim { color: var(--vermelho); }
+  main { flex: 1; display: grid; grid-template-columns: minmax(280px, 380px) 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--linha); background: var(--painel); display: flex; flex-direction: column; min-height: 0; }
+  .filtros { padding: 10px 12px; border-bottom: 1px solid var(--linha); display: flex; flex-direction: column; gap: 8px; }
+  input[type=search] { width: 100%; padding: 7px 10px; border: 1px solid var(--linha); border-radius: 6px; background: var(--fundo); color: var(--texto); font: inherit; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { border: 1px solid var(--linha); background: transparent; color: var(--suave); border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+  .chip[aria-pressed=true] { background: var(--texto); color: var(--painel); border-color: var(--texto); }
+  #lista { overflow-y: auto; flex: 1; }
+  .item { padding: 10px 12px; border-bottom: 1px solid var(--linha); cursor: pointer; display: grid; gap: 3px; }
+  .item:hover { background: var(--sel); }
+  .item.atual { background: var(--sel); }
+  .linha1 { display: flex; justify-content: space-between; gap: 8px; }
+  .nome { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hora { color: var(--suave); font-size: 12px; flex: none; }
+  .previa { color: var(--suave); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .selo { font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+  .selo::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: currentColor; }
+  .s-dante { color: var(--verde); } .s-vai-responder { color: var(--azul); } .s-esperando-cliente { color: var(--cinza); }
+  .s-equipe { color: var(--azul); } .s-aguardando-equipe { color: var(--ambar); } .s-caso { color: var(--ambar); }
+  .s-pausado { color: var(--vermelho); } .s-fora, .s-sem-dante { color: var(--cinza); }
+  section { display: flex; flex-direction: column; min-height: 0; }
+  .abas { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--linha); background: var(--painel); }
+  .aba { border: 0; background: transparent; padding: 8px 12px; font: inherit; color: var(--suave); cursor: pointer; border-bottom: 2px solid transparent; }
+  .aba[aria-selected=true] { color: var(--texto); border-bottom-color: var(--texto); font-weight: 600; }
+  .cab { padding: 12px 16px; border-bottom: 1px solid var(--linha); background: var(--painel); }
+  .cab h2 { margin: 0 0 4px; font-size: 16px; }
+  .meta { color: var(--suave); font-size: 13px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .corpo { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 72%; padding: 7px 10px; border-radius: 8px; background: var(--cliente); border: 1px solid var(--linha); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg small { display: block; color: var(--suave); font-size: 11px; margin-bottom: 2px; }
+  .msg.dante { align-self: flex-end; background: var(--dante); }
+  .msg.equipe { align-self: flex-end; background: var(--equipe); }
+  .msg.aviso { align-self: flex-end; background: var(--aviso); }
+  .vazio { color: var(--suave); margin: auto; text-align: center; }
+  .caixa { padding: 14px 16px; overflow-y: auto; display: grid; gap: 14px; align-content: start; }
+  .cartao { border: 1px solid var(--linha); background: var(--painel); border-radius: 8px; padding: 10px 12px; }
+  .cartao h3 { margin: 0 0 6px; font-size: 13px; }
+  pre { margin: 0; font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--suave); }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--linha); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zapdesk</h1>
+  <div class="saude" id="saude">carregando…</div>
+</header>
+<main>
+  <aside>
+    <div class="filtros">
+      <input type="search" id="busca" placeholder="Buscar nome ou número">
+      <div class="chips" id="chips"></div>
+    </div>
+    <div id="lista"></div>
+  </aside>
+  <section>
+    <div class="abas" role="tablist">
+      <button class="aba" role="tab" id="aba-conversa" aria-selected="true">Conversa</button>
+      <button class="aba" role="tab" id="aba-dante" aria-selected="false">Dante</button>
+    </div>
+    <div id="painel-conversa" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="cab" id="cab"><span class="meta">Escolha uma conversa à esquerda.</span></div>
+      <div class="corpo" id="msgs"></div>
+    </div>
+    <div class="caixa" id="painel-dante" style="display:none"></div>
+  </section>
+</main>
+<script>
+const ROTULOS = {
+  dante: 'Dante atendendo', 'vai-responder': 'Dante vai responder', 'esperando-cliente': 'Esperando o cliente',
+  equipe: 'Equipe atendendo', 'aguardando-equipe': 'Aguardando equipe', caso: 'Caso aberto', pausado: 'Pausado', fora: 'Fora do Dante', 'sem-dante': 'Sem Dante',
+};
+const $ = (id) => document.getElementById(id);
+const estado = { conversas: [], atual: null, filtro: new Set(), busca: '', aba: 'conversa' };
+
+const el = (tag, cls, texto) => { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; };
+const hora = (ts) => {
+  const d = new Date(ts * 1000), h = new Date();
+  const mesmoDia = d.toDateString() === h.toDateString();
+  return mesmoDia ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+};
+const restante = (ate) => {
+  const s = ate - Math.floor(Date.now() / 1000);
+  if (s <= 0) return '';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h >= 24 ? `volta em ${Math.floor(h / 24)} d ${h % 24} h` : `volta em ${h} h ${m} min`;
+};
+const api = async (url) => { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.json()).erro || r.status); return r.json(); };
+
+function desenharChips() {
+  const caixa = $('chips');
+  caixa.replaceChildren();
+  for (const [codigo, rotulo] of Object.entries(ROTULOS)) {
+    const n = estado.conversas.filter((c) => c.status.codigo === codigo).length;
+    if (!n && !estado.filtro.has(codigo)) continue;
+    const b = el('button', 'chip', `${rotulo} ${n}`);
+    b.setAttribute('aria-pressed', estado.filtro.has(codigo));
+    b.onclick = () => { estado.filtro.has(codigo) ? estado.filtro.delete(codigo) : estado.filtro.add(codigo); desenharLista(); desenharChips(); };
+    caixa.append(b);
+  }
+}
+
+function desenharLista() {
+  const q = estado.busca.toLowerCase();
+  const itens = estado.conversas.filter((c) =>
+    (!estado.filtro.size || estado.filtro.has(c.status.codigo)) && (!q || c.nome.toLowerCase().includes(q) || c.numero.includes(q)));
+  const lista = $('lista');
+  lista.replaceChildren();
+  if (!itens.length) lista.append(el('div', 'vazio', 'Nenhuma conversa.'));
+  for (const c of itens) {
+    const i = el('div', 'item' + (c.jid === estado.atual ? ' atual' : ''));
+    const l1 = el('div', 'linha1');
+    l1.append(el('span', 'nome', c.nome), el('span', 'hora', c.ultima_ts ? hora(c.ultima_ts) : ''));
+    const sel = el('span', `selo s-${c.status.codigo}`, c.status.rotulo + (c.status.ate ? ' · ' + restante(c.status.ate) : '') + (c.casoAberto && c.status.codigo !== 'caso' ? ` · caso #${c.casoAberto}` : ''));
+    i.append(l1, el('div', 'previa', (c.ultimaMeu ? 'você: ' : '') + c.previa), sel);
+    i.onclick = () => { estado.atual = c.jid; mostrar('conversa'); desenharLista(); carregarConversa(); };
+    lista.append(i);
+  }
+}
+
+async function carregarConversas() {
+  estado.conversas = await api('/api/conversas');
+  desenharChips();
+  desenharLista();
+}
+
+async function carregarConversa() {
+  if (!estado.atual) return;
+  const d = await api('/api/conversas/' + encodeURIComponent(estado.atual));
+  const cab = $('cab');
+  cab.replaceChildren();
+  cab.append(el('h2', null, d.nome));
+  const meta = el('div', 'meta');
+  meta.append(el('span', `selo s-${d.status.codigo}`, d.status.rotulo + (d.status.ate ? ' · ' + restante(d.status.ate) : '')), el('span', null, '+' + d.numero));
+  if (d.perfil) meta.append(el('span', null, 'perfil: ' + d.perfil));
+  if (d.origem) meta.append(el('span', null, 'origem: ' + d.origem));
+  if (d.etiquetas.length) meta.append(el('span', null, d.etiquetas.join(' · ')));
+  cab.append(meta, el('div', 'meta', d.status.detalhe));
+  const corpo = $('msgs');
+  const noFim = corpo.scrollHeight - corpo.scrollTop - corpo.clientHeight < 80;
+  corpo.replaceChildren();
+  for (const m of d.msgs) {
+    const classe = m.quem === 'CLIENTE' ? '' : m.quem === 'EQUIPE' ? ' equipe' : m.quem === 'AVISO' ? ' aviso' : ' dante';
+    const b = el('div', 'msg' + classe);
+    b.append(el('small', null, `${m.quem === 'CLIENTE' ? d.nome : m.quem} · ${hora(m.ts)}${m.tipo && m.tipo !== 'texto' ? ' · ' + m.tipo : ''}`));
+    const t = m.texto || (m.transcricao ? '🎙 ' + m.transcricao : '') || `[${m.tipo || 'mídia'}]`;
+    b.append(document.createTextNode(t));
+    corpo.append(b);
+  }
+  if (noFim || !corpo.dataset.visto) corpo.scrollTop = corpo.scrollHeight;
+  corpo.dataset.visto = '1';
+}
+
+async function carregarDante() {
+  const d = await api('/api/dante');
+  const s = $('saude');
+  s.replaceChildren();
+  const ponto = (rotulo, ok) => { const e = el('span'); e.append(document.createTextNode(rotulo + ' ')); e.append(el('b', ok ? 'ok' : 'ruim', ok ? 'no ar' : 'parado')); return e; };
+  s.append(ponto('Dante', d.agenteVivo), ponto('Leitor', d.leitorVivo));
+  const p = el('span'); p.append(document.createTextNode('Atendimento ')); p.append(el('b', d.pausado ? 'ruim' : 'ok', d.pausado ? 'pausado' : 'ativo')); s.append(p);
+  const f = Object.entries(d.fila).map(([k, v]) => `${v} ${k}`).join(', ');
+  s.append(el('span', null, 'Fila: ' + (f || 'vazia')));
+  s.append(el('span', null, 'Casos abertos: ' + d.casosAbertos.length));
+
+  const caixa = $('painel-dante');
+  caixa.replaceChildren();
+  const c1 = el('div', 'cartao'); c1.append(el('h3', null, `Casos abertos (${d.casosAbertos.length})`));
+  if (!d.casosAbertos.length) c1.append(el('div', 'meta', 'Nenhum.'));
+  for (const k of d.casosAbertos) {
+    const l = el('div', 'previa'); l.style.whiteSpace = 'normal';
+    l.textContent = `#${k.id} ${k.nome || ''}: ${k.resumo || ''}`;
+    c1.append(l);
+  }
+  const c2 = el('div', 'cartao'); c2.append(el('h3', null, 'Log do agente (últimas linhas)'));
+  const pre = el('pre', null, d.log.join('\n') || 'sem log'); c2.append(pre);
+  caixa.append(c1, c2);
+}
+
+function mostrar(aba) {
+  estado.aba = aba;
+  $('aba-conversa').setAttribute('aria-selected', aba === 'conversa');
+  $('aba-dante').setAttribute('aria-selected', aba === 'dante');
+  $('painel-conversa').style.display = aba === 'conversa' ? 'flex' : 'none';
+  $('painel-dante').style.display = aba === 'dante' ? 'grid' : 'none';
+}
+$('aba-conversa').onclick = () => mostrar('conversa');
+$('aba-dante').onclick = () => { mostrar('dante'); carregarDante().catch(() => {}); };
+$('busca').oninput = (e) => { estado.busca = e.target.value; desenharLista(); };
+
+async function ciclo() {
+  try {
+    await Promise.all([carregarConversas(), carregarDante(), estado.aba === 'conversa' ? carregarConversa() : null]);
+  } catch (e) { $('saude').textContent = 'Sem resposta do servidor do painel: ' + e.message; }
+}
+ciclo();
+setInterval(ciclo, 5000);
+</script>
+</body>
+</html>
