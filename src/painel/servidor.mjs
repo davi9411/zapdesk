@@ -101,5 +101,8 @@ export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirParaEs
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  criarServidor().listen(PORTA, HOST, () => console.log(`Painel Zapdesk em http://${HOST}:${PORTA}`));
+  const srv = criarServidor();
+  // a tarefa agendada confere de tempos em tempos: se o painel já está rodando, a segunda cópia sai quieta
+  srv.on('error', (e) => { if (e.code === 'EADDRINUSE') process.exit(0); console.error(e.message); process.exit(1); });
+  srv.listen(PORTA, HOST, () => console.log(`Painel Zapdesk em http://${HOST}:${PORTA}`));
 }
