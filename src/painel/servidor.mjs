@@ -16,9 +16,10 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
 const PORTA = Number(process.env.PAINEL_PORTA || 4747);
 
-// o navegador local manda Host: 127.0.0.1:porta ou localhost:porta; qualquer outro nome é recusado
-// (protege contra um site qualquer que aponte seu domínio para 127.0.0.1)
-export const hostPermitido = (host) => /^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host || '');
+// o navegador local manda Host: 127.0.0.1:porta, localhost:porta ou zap.localhost:porta; qualquer outro nome é recusado
+// (protege contra um site qualquer que aponte seu domínio para 127.0.0.1).
+// zap.localhost é o apelido fácil de digitar: o navegador resolve *.localhost sempre para a própria máquina.
+export const hostPermitido = (host) => /^(127\.0\.0\.1|localhost|zap\.localhost)(:\d+)?$/i.test(host || '');
 
 const json = (res, codigo, corpo) => {
   res.writeHead(codigo, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

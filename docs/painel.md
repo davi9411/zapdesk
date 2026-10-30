@@ -1,6 +1,6 @@
 # Painel local, MCP e rotinas
 
-- **Painel:** `http://127.0.0.1:4747` (tarefa agendada `wa-painel`, instalada com `tools/instalar-painel.ps1`). Escuta só em 127.0.0.1.
+- **Painel:** `http://zap.localhost:4747` (apelido fácil; `http://127.0.0.1:4747` também funciona) (tarefa agendada `wa-painel`, instalada com `tools/instalar-painel.ps1`). Escuta só em 127.0.0.1.
 - **MCP:** `claude mcp add --scope user zapdesk -- node --no-warnings <repo>\src\mcp\servidor.mjs`. Ferramentas `zapdesk_*`.
 - **Rotinas:** criadas no painel (aba Rotinas) ou pelo MCP; o agente (`wa-agente`) dispara na hora e pula a ocorrência se ficou parado mais de 30 min.
 

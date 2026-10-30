@@ -103,6 +103,8 @@ test('painel: detalhe traz quem escreveu cada mensagem; conversa inexistente dá
 test('painel: servidor só aceita host local e só GET', async () => {
   assert.equal(hostPermitido('127.0.0.1:4747'), true);
   assert.equal(hostPermitido('localhost:4747'), true);
+  assert.equal(hostPermitido('zap.localhost:4747'), true);
+  assert.equal(hostPermitido('zap.localhost.exemplo.com'), false);
   assert.equal(hostPermitido('exemplo.com'), false);
   assert.equal(hostPermitido(undefined), false);
 
