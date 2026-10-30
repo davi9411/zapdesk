@@ -267,8 +267,7 @@ async function carregarDante() {
   const c2 = el('div', 'cartao'); c2.append(el('h3', null, 'Log do agente (últimas linhas)'));
   const pre = el('pre', null, d.log.join('\n') || 'sem log'); c2.append(pre);
   const c3 = el('div', 'cartao'); c3.append(el('h3', null, 'Ações feitas pelo painel e pelo Claude (últimas)'));
-  c3.append(el('pre', null, (d.auditoria || []).map((a) => `${hora(a.ts)}  ${a.origem}  ${a.acao}${a.detalhe ? '  ' + a.detalhe : ''}`).join('
-') || 'nada ainda'));
+  c3.append(el('pre', null, (d.auditoria || []).map((a) => `${hora(a.ts)}  ${a.origem}  ${a.acao}${a.detalhe ? '  ' + a.detalhe : ''}`).join('\n') || 'nada ainda'));
   caixa.append(c1, c3, c2);
 }
 

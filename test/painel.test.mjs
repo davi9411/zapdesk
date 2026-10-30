@@ -264,3 +264,10 @@ test('painel: rotas de controle exigem token e agem no banco', async () => {
     assert.equal((await post('/api/silenciar', { jid: 'nada@s.whatsapp.net' })).status, 404);
   } finally { srv.close(); db.close(); }
 });
+
+test('painel: o script da página tem sintaxe válida', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../src/painel/pagina.html', import.meta.url), 'utf8');
+  const js = html.split('<script>')[1].split('</script>')[0];
+  assert.doesNotThrow(() => new Function(js));
+});
