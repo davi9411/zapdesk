@@ -42,6 +42,15 @@ export function reativar(db, chat) {
   db.prepare('DELETE FROM agente_silencio WHERE chat = ?').run(chat);
 }
 
+// fecha à mão os casos abertos: um id, ou todos os de uma conversa. Não manda nada ao cliente.
+export function fecharCasos(db, { id, chat }, agora = Math.floor(Date.now() / 1000)) {
+  if (!temTabela(db, 'agente_caso')) return { fechados: 0 };
+  const r = id != null
+    ? db.prepare("UPDATE agente_caso SET status = 'descartado', fechado = ? WHERE id = ? AND status = 'aberto'").run(agora, Number(id))
+    : db.prepare("UPDATE agente_caso SET status = 'descartado', fechado = ? WHERE chat = ? AND status = 'aberto'").run(agora, String(chat || ''));
+  return { fechados: Number(r.changes) };
+}
+
 export function definirPausa(db, pausado) {
   criarTabelasControle(db);
   db.prepare('INSERT OR REPLACE INTO agente_kv VALUES (?, ?)').run('pausado', pausado ? '1' : '0');

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { abrirLeitura, lerConfig, listarConversas, detalharConversa, resumoDante, leitorVivo as leitorNoAr, abrirEscrita as abrirParaEscrever } from './dados.mjs';
 import { enfileirarEnvio, cancelarEnvio, ErroEnvio } from './envio.mjs';
-import { assumirDeVolta, silenciar, reativar, definirPausa } from '../agente/controle.mjs';
+import { assumirDeVolta, silenciar, reativar, definirPausa, fecharCasos } from '../agente/controle.mjs';
 import { criarRotina, alternarRotina, apagarRotina, listarRotinas } from '../regras/rotinas.mjs';
 import { registrar } from './auditoria.mjs';
 
@@ -90,6 +90,14 @@ export function criarServidor({ abrir = abrirLeitura, abrirEscrita = abrirParaEs
         const horas = Number(corpo.horas) || 0; // 0 = até reativar
         registrar(db, { acao, chat: chat.jid, detalhe: horas > 0 ? `${horas} h` : 'até reativar' });
         return json(res, 200, silenciar(db, chat.jid, horas > 0 ? Math.floor(Date.now() / 1000) + Math.round(horas * 3600) : 0));
+      }
+      if (url.pathname === '/api/fechar-caso') {
+        db = abrirEscrita();
+        if (corpo.id == null && !corpo.jid) throw new ErroEnvio('Informe o caso ou a conversa.', 400);
+        const r = fecharCasos(db, { id: corpo.id, chat: corpo.jid });
+        if (!r.fechados) throw new ErroEnvio('Nenhum caso aberto para fechar.', 404);
+        registrar(db, { acao: 'fechar-caso', chat: corpo.jid || null, detalhe: corpo.id != null ? `#${corpo.id}` : `${r.fechados} caso(s)` });
+        return json(res, 200, r);
       }
       if (url.pathname === '/api/rotinas') {
         db = abrirEscrita();

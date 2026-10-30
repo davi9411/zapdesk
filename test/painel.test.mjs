@@ -51,7 +51,7 @@ function bancoDeTeste() {
     CREATE TABLE etiqueta_chat (chat TEXT, etiqueta TEXT);
     CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT NOT NULL, nome TEXT, texto TEXT, arquivos TEXT, enviar_em INTEGER NOT NULL, criado INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pendente', enviado_em INTEGER, erro TEXT, enquete TEXT);
     CREATE TABLE agente_chat (chat TEXT PRIMARY KEY, ultimo_ts INTEGER DEFAULT 0, humano INTEGER DEFAULT 0, escolha TEXT, prefere_humano_ts INTEGER DEFAULT 0, nome_cliente TEXT, perfil TEXT, origem TEXT);
-    CREATE TABLE agente_caso (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, nome TEXT, resumo TEXT, pergunta TEXT, status TEXT DEFAULT 'aberto', criado INTEGER, tipo TEXT);
+    CREATE TABLE agente_caso (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, nome TEXT, resumo TEXT, pergunta TEXT, status TEXT DEFAULT 'aberto', criado INTEGER, tipo TEXT, fechado INTEGER);
     CREATE TABLE agente_kv (k TEXT PRIMARY KEY, v TEXT);
   `);
   writeFileSync(join(dados, 'agente.json'), JSON.stringify({ inicio: '2020-01-01T00:00:00Z', davi: '5511900000000', excluir: ['5511977770000'] }));
