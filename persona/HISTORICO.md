@@ -70,3 +70,34 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
   `atendimento.md`.
 - **Propaganda**: ignora e só avisa a equipe; proposta → "a equipe vai analisar" — `atendimento.md`.
 - **Parâmetro exato dos nossos robôs** (lê o .mq5) e "Estou obtendo essa informação e já te retorno" — prompt + `regras.md`.
+
+## 01/11/2026
+- **Desculpa pela demora só com 15 min ou mais de espera** (antes o modelo inventava; dois casos reais de clientes). O prompt
+  proíbe abaixo disso e o código corta a frase se escapar — `prompts.mjs` + `higiene.mjs`.
+- **Nunca dizer que não conseguiu ver/ouvir o que o cliente mandou** — prompt, filtro no código (reescreve) e, se a
+  reescrita falhar, "Pode me contar em uma frase o que acontece?" — `higiene.mjs`, `regras`/prompt.
+- **Vídeo agora é visto**: os frames extraídos pelo `preparar` entram na conversa (`frames: caminhos`) para o modelo
+  abrir com Read; transcrição/frames pendentes seguram a resposta (até 3 tentativas) e o tempo máximo do preparo subiu
+  de 5 para 10 min (com o PC ocupado a transcrição era cortada e o agente respondia "sem ver") — `agente.mjs`.
+- **Continuidade de assunto (equipe falou por último há mais de 12 h e menos de 7 dias)**: o agente confere se o cliente
+  continua o assunto que o Davi tratava. "Novo" → atende normal; "continuação" ou dúvida → enquete "Vi que você estava
+  tratando de X com o Davi. Como prefere seguir?"; sem voto em 20 min → briefing para o Davi no pessoal; voto no
+  pré-atendimento → atende (e o painel passa a ignorar as falas antigas da equipe); voto na equipe → aguarda 3 dias e
+  avisa o Davi. Mais de 7 dias = assunto novo — `continuidade.mjs`.
+- **Enquete da escolha com textos novos**: "1 - Seguir com o pré-atendimento do Dante" / "2 - Aguardar o retorno da
+  equipe DS Trade" — `enquete.mjs`.
+- **Suporte técnico com tarefa de correção** — `tecnico.md` (novo). O agente toma a frente de bug/ajuste (mesmo sem
+  texto do cliente), confirma o robô com o cliente, lê o código do robô e só abre a tarefa depois do cliente confirmar.
+  O Davi autoriza no pessoal ("T3 autorizo"); o agente acha a sessão do Claude Code do cliente (pelo nome completo ou
+  só o primeiro) e roda `claude -p --resume` nela; se não achar, pergunta o nome ("T3 sessao NomeDoCliente"). Quando a
+  correção termina, avisa o Davi, que diz quando entregar ("T3 entregar 2 dias"); a entrega sai programada — `tarefas.mjs`.
+  Sem commit, sem envio ao cliente e sem arquivos internos: continua tudo com aprovação do Davi.
+- **Orientação do dono por conversa** (`agente_kv` chave `nota:<jid>`): entra no prompt como instrução, sem ser repetida
+  ao cliente.
+- **Histórico progressivo** (pedido do Davi, 01/11): o agente lê só as 15 mensagens mais recentes dos últimos 3 dias (a
+  mensagem mais antiga sem resposta sempre entra). Se não entender a última mensagem (vídeo, áudio, texto solto), marca
+  `entendeu: false` e o sistema repete com 40 mensagens dos últimos 10 dias; se ainda assim não entender, pergunta ao
+  cliente. Se o cliente não responde à pergunta do pré-atendimento em 20 min, o Davi recebe um aviso com o assunto e a
+  última mensagem, para decidir se o Dante segue ou se ele assume — `agente.mjs`, `prompts.mjs`.
+- **Enquete de continuidade**: fala "com o Davi" quando o assunto era uma conversa direta com ele e "com a equipe da
+  DS Trade" quando era algo genérico — `continuidade.mjs`.

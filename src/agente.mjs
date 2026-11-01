@@ -20,10 +20,10 @@
 // "#N orientação" / "#N ok" / "#N depois", "REGRA: texto" / "REGRAS" / "REGRA- N" (regras ensinadas)
 // e texto livre ("manda pro Fulano que...", "marca a Fulana como pessoal").
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync, statSync, readdirSync, openSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { uptime } from 'node:os';
+import { uptime, homedir } from 'node:os';
 import { PATHS } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { promptCliente, promptRespostaDavi, promptComandoDavi, promptFicha } from './agente/prompts.mjs';
@@ -34,9 +34,11 @@ import { cartao } from './notificador/cartao.mjs';
 import { WIN, processoVivo, python, claudeExe } from './sistema.mjs';
 import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
-import { criarTabelasControle, assumeTs, silenciada } from './agente/controle.mjs';
+import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
-
+import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi } from './agente/higiene.mjs';
+import { CONT_DIAS, CONT_ESPERA_MIN, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
+import { criarTabelaTarefas, criarTarefa, mudar, buscar, resolverRobo, acharSessao, promptCorrecao, quandoEntregar, lerComando } from './agente/tarefas.mjs';
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
 const ARQ_PID = join(PATHS.data, 'agente.pid');
@@ -82,6 +84,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS agente_ficha (chat TEXT PRIMARY KEY, dados TEXT, atualizado INTEGER);
 `);
 criarTabelasControle(db);
+criarTabelaTarefas(db);
+// continuidade de assunto: cont_estado = aguardando (enquete enviada) | avisado (sem voto, Davi avisado) | vazio
+for (const col of ['pend_ts INTEGER DEFAULT 0', 'pend_resumo TEXT', 'cont_estado TEXT', 'cont_ts INTEGER DEFAULT 0', 'cont_decidido_ts INTEGER DEFAULT 0', 'cont_briefing TEXT', 'cont_assunto TEXT']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 for (const col of ['nome_cliente TEXT', 'origem TEXT', 'alertado_ts INTEGER DEFAULT 0', 'etiquetado INTEGER DEFAULT 0', 'ja_cliente INTEGER DEFAULT 0', 'escolha TEXT', 'prefere_humano_ts INTEGER DEFAULT 0', 'perfil TEXT', 'estilo TEXT', 'escolha_pendente INTEGER DEFAULT 0', 'feedback_ts INTEGER DEFAULT 0', 'avaliar_apos_ts INTEGER DEFAULT 0', 'avaliar_resumo TEXT', 'momento_ts INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_chat ADD COLUMN ${col}`); } catch {} }
 // tipo: consultar | encaminhar | sugestao; sugestao = texto pronto que o Davi aprova com "#N ok"
 for (const col of ["tipo TEXT DEFAULT 'consultar'", 'sugestao TEXT', 'lembrado INTEGER DEFAULT 0']) { try { db.exec(`ALTER TABLE agente_caso ADD COLUMN ${col}`); } catch {} }
@@ -141,9 +146,15 @@ function estadoChat(chat) {
 }
 
 // ---------- conversa em texto para o modelo ----------
-function textoConversa(cfg, chat, limite = 25) {
+// frames extraídos de um vídeo (pasta gravada pelo "preparar"): o modelo olha com a ferramenta Read
+function framesDe(m) {
+  try { return m.frames ? readdirSync(m.frames).filter((f) => /\.jpe?g$/i.test(f)).sort().map((f) => join(m.frames, f)).join(', ') : ''; } catch { return ''; }
+}
+// só as mensagens recentes (limite de quantidade e de dias): o histórico antigo não ajuda a atender e pesa no prompt
+function textoConversa(cfg, chat, limite = 25, dias = 0) {
   const aus = textoAusencia();
-  const rows = db.prepare('SELECT * FROM (SELECT * FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT ?) ORDER BY ts').all(chat, limite);
+  const desde = dias ? agora() - dias * 86400 : 0;
+  const rows = db.prepare('SELECT * FROM (SELECT * FROM msgs WHERE chat = ? AND ts >= ? ORDER BY ts DESC LIMIT ?) ORDER BY ts').all(chat, desde, limite);
   const cab = cabecalho(cfg);
   return rows.map((m) => {
     const quando = new Date(m.ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -153,7 +164,7 @@ function textoConversa(cfg, chat, limite = 25) {
     const fala = m.meu ? m.transcricao : m.transcricao && limparTextoCliente(m.transcricao);
     if (m.meu) { if (t.startsWith(cab)) { quem = cfg.nome.toUpperCase(); t = t.slice(cab.length); const rod = rodape(cfg); if (rod && t.endsWith(rod)) t = t.slice(0, -rod.length); } else if (ehDoAgente(cfg, t)) quem = cfg.nome.toUpperCase(); else if (aus.includes(t)) quem = 'AVISO'; else quem = 'EQUIPE'; }
     if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${fala}"` : '(sem transcrição)'}`;
-    else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}] ${m.transcricao ? `fala: "${fala}"` : ''}`;
+    else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}${framesDe(m) ? `, frames: ${framesDe(m)}` : ''}] ${m.transcricao ? `fala: "${fala}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
     else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
     else if (m.tipo === 'figurinha') t = '[figurinha]';
@@ -251,12 +262,16 @@ async function obterFicha(cfg, chat, nome) {
 }
 
 // ---------- preparar mídia (transcrição) ----------
+// áudio sem transcrição ou vídeo sem transcrição/frames
+const midiaPendente = (chat, desde) => db.prepare("SELECT COUNT(*) n FROM msgs WHERE chat = ? AND ts >= ? AND tipo IN ('audio','video') AND arquivo IS NOT NULL AND (transcricao IS NULL OR (tipo = 'video' AND frames IS NULL))").get(chat, desde).n;
+// devolve quantas mídias continuam sem preparo (0 = tudo pronto)
 function prepararMidia(chat, desde) {
-  const pend = db.prepare("SELECT COUNT(*) n FROM msgs WHERE chat = ? AND ts >= ? AND tipo IN ('audio','video') AND arquivo IS NOT NULL AND transcricao IS NULL").get(chat, desde).n;
-  if (!pend) return;
+  if (!midiaPendente(chat, desde)) return 0;
   const [py, ...pyArgs] = python();
-  const r = spawnSync(py, [...pyArgs, join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { timeout: 300_000, windowsHide: true, encoding: 'utf8' });
+  // com o PC ocupado (testes, outras tarefas) a transcrição passou de 5 min e foi cortada: agora tem 10 min
+  const r = spawnSync(py, [...pyArgs, join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { timeout: 600_000, windowsHide: true, encoding: 'utf8' });
   log(`preparar ${chat}: ${r.status} ${(r.stdout || '').trim().split('\n').pop()}`);
+  return midiaPendente(chat, desde);
 }
 
 const numeroDe = (chat) => (chat.endsWith('@s.whatsapp.net') ? `+${chat.split('@')[0]}` : chat);
@@ -275,8 +290,10 @@ function perfilDo(cfg, chat, e) {
 }
 
 // contexto comum do prompt do cliente
-function argsPrompt(cfg, chat, e, sugestao = false) {
-  prepararMidia(chat, Math.floor(cfg.ini / 1000) - 3600);
+// janela 0: conversa recente (padrão 15 mensagens dos últimos 3 dias); janela 1: ampliada, só se o agente não entendeu
+const janelaHistorico = (cfg, janela) => (janela ? { msgs: 40, dias: 10 } : { msgs: cfg.historicoMsgs ?? 15, dias: cfg.historicoDias ?? 3 });
+function argsPrompt(cfg, chat, e, sugestao = false, janela = 0) {
+  const midiaPendente = prepararMidia(chat, Math.floor(cfg.ini / 1000) - 3600);
   const abertos = db.prepare("SELECT id, resumo, pergunta FROM agente_caso WHERE chat = ? AND status = 'aberto'").all(chat);
   // cliente novo = o agente nunca atendeu essa conversa e a equipe não falou com ela nos últimos 3 dias
   // (histórico antigo, até pessoal, não impede; o modelo vê a conversa e não repete perguntas já respondidas)
@@ -284,7 +301,10 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
   const teveHumano = db.prepare('SELECT texto FROM msgs WHERE chat = ? AND meu = 1 AND ts > ?').all(chat, agora() - 3 * 86400).some((m) => ehHumano(cfg, m.texto, aus));
   // há quanto tempo a mensagem mais antiga ainda não respondida espera (retomada depois de ficar fora do ar)
   const pendente = db.prepare('SELECT MIN(ts) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').get(chat, e.ultimo_ts || 0).t;
-  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat), primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(), ficha: fichaTeste(cfg, chat) || fichaGuardada(chat),
+  const J = janelaHistorico(cfg, janela);
+  // a mensagem mais antiga ainda sem resposta sempre entra, por mais velha que seja
+  const diasJ = Math.max(J.dias, pendente ? Math.ceil((agora() - pendente) / 86400) + 1 : 0);
+  return { nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, chat, J.msgs, diasJ), janelaAmpla: !!janela, primeiroContato: !sugestao && !e.apresentado, regras: lerRegras(), ficha: fichaTeste(cfg, chat) || fichaGuardada(chat),
     esperaMin: pendente ? Math.round((agora() - pendente) / 60) : 0,
     casosAbertos: abertos.map((c) => `#${c.id}: ${c.pergunta}`).join('\n'), evento: eventoAtivo(cfg), sugestao,
     clienteNovo: !e.apresentado && !teveHumano, nomeCliente: e.nome_cliente, origem: e.origem,
@@ -299,7 +319,8 @@ function argsPrompt(cfg, chat, e, sugestao = false) {
     // avaliação pedida há menos de 2 dias e ainda sem comentário: a próxima mensagem pode ser o comentário
     feedbackPendente: !!(e.feedback_ts && agora() - e.feedback_ts < 2 * 86400 && db.prepare('SELECT comentario FROM feedback WHERE chat = ? ORDER BY id DESC LIMIT 1').get(chat)?.comentario == null),
     podeAvaliar: cfg.feedback !== false && !e.feedback_ts && !teveHumano && !abertos.length && e.escolha !== 'humano',
-    pastaRobo: pastaRobo(cfg, chat),
+    pastaRobo: pastaRobo(cfg, chat), midiaPendente,
+    notaDono: kv.get(`nota:${chat}`) || '', // orientação do dono para esta conversa (kv "nota:<jid>")
     perfil: perfilDo(cfg, chat, e), estilo: e.estilo,
     agoraTxt: new Date().toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) };
 }
@@ -450,9 +471,24 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
 async function atender(cfg, chat, nome, ateTs, e) {
   if (!fichaTeste(cfg, chat) && deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
   const args = argsPrompt(cfg, chat, e);
-  const prompt = promptCliente(args);
+  // vídeo/áudio ainda sem transcrição ou frames: tenta de novo no próximo ciclo (até 3 vezes) em vez de responder "sem ver"
+  if (args.midiaPendente) {
+    const n = Number(kv.get(`prep:${chat}`) || 0) + 1;
+    kv.set(`prep:${chat}`, n);
+    if (n < 3) { log(`${chat}: mídia ainda sem preparo (tentativa ${n}); espero o próximo ciclo`); return; }
+  } else kv.set(`prep:${chat}`, 0);
+  db.prepare('UPDATE agente_chat SET pend_ts = 0 WHERE chat = ?').run(chat); // o cliente voltou a escrever: a pergunta pendente acabou
+  const opcoesModelo = pastaRobo(cfg, chat) ? { ferramentas: ['Read', 'Glob', 'Grep'], pastas: [pastaRobo(cfg, chat)], turnos: 10 } : undefined;
   let r;
-  try { r = await chamarClaude(prompt, 240_000, pastaRobo(cfg, chat) ? { ferramentas: ['Read', 'Glob', 'Grep'], pastas: [pastaRobo(cfg, chat)], turnos: 10 } : undefined); }
+  try {
+    r = await chamarClaude(promptCliente(args), 240_000, opcoesModelo);
+    // não entendeu com a conversa recente: olha mais para trás (até 10 dias) antes de perguntar ao cliente
+    if (r.entendeu === false && r.acao !== 'silencio') {
+      log(`${chat}: não entendeu com a conversa recente; amplia o histórico`);
+      Object.assign(args, argsPrompt(cfg, chat, e, false, 1));
+      r = await chamarClaude(promptCliente(args), 240_000, opcoesModelo);
+    }
+  }
   catch (err) { log(`ERRO claude ${chat}: ${err.message}`); falhou(cfg, err.message); return; } // não marca como lido: tenta de novo no próximo ciclo
   db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(ateTs, chat);
   log(`cliente ${nome || chat}: ${r.acao} | ${r.resumo || ''}`);
@@ -490,8 +526,19 @@ async function atender(cfg, chat, nome, ateTs, e) {
   }
   if (r.acao === 'silencio') return;
   // sem mensagem ao cliente (ex.: propaganda): só avisa a equipe
-  if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') avisarCaso(cfg, chat, nome, e, r, r.acao); return; }
+  if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') encaminhar(cfg, chat, nome, e, r, r.acao); return; }
   let texto = await limitarTamanho(cfg, chat, String(r.mensagem_cliente).trim().slice(0, 1500));
+  // desculpa pela demora só se o cliente esperou 15 min ou mais; e nunca "não consegui ver o vídeo/áudio"
+  if (args.esperaMin < 15) {
+    const sem = tirarDesculpaDemora(texto);
+    if (sem && sem !== texto) { log(`desculpa cortada (esperou ${args.esperaMin} min) ${chat}`); texto = sem; }
+  }
+  if (admiteNaoVer(texto)) {
+    let novo = '';
+    try { novo = String((await chamarClaude(promptSemNaoVi(texto), 90_000, { turnos: 1 })).texto || '').trim(); } catch { /* cai no texto padrão */ }
+    log(`"não consegui ver" reescrito ${chat}: ${texto}`);
+    texto = novo && !admiteNaoVer(novo) ? novo : 'Pode me contar em uma frase o que acontece? Assim já sigo daqui.';
+  }
   let acao = r.acao;
   const nomeCli = r.nome_cliente || e.nome_cliente;
   const termo = termoProibido(PROIBIDO, texto, nomeCli);
@@ -510,6 +557,8 @@ async function atender(cfg, chat, nome, ateTs, e) {
   else enfileirar(chat, nome, paraCliente(cfg, texto));
   if (comEnquete) { db.prepare('UPDATE agente_chat SET escolha_pendente = 1 WHERE chat = ?').run(chat); log(`${chat}: enquete da escolha enviada`); }
   db.prepare('UPDATE agente_chat SET apresentado = 1, msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
+  // o agente perguntou algo (não entendeu o caso ou ofereceu a escolha): se o cliente não responder, o Davi é avisado
+  if (r.entendeu === false || comEnquete) db.prepare('UPDATE agente_chat SET pend_ts = ?, pend_resumo = ? WHERE chat = ?').run(agora(), String(r.resumo || '').slice(0, 300), chat);
   if (!e.etiquetado && cfg.etiquetaLead && !propaganda) {
     db.prepare('UPDATE agente_chat SET etiquetado = 1 WHERE chat = ?').run(chat);
     const salvo = db.prepare('SELECT salvo FROM chats WHERE jid = ?').get(chat)?.salvo;
@@ -517,7 +566,15 @@ async function atender(cfg, chat, nome, ateTs, e) {
     if (!salvo && !etiquetasDo(chat).length && primeira > agora() - 3 * 86400) { pedirEtiqueta(chat, cfg.etiquetaLead); log(`lead: etiqueta "${cfg.etiquetaLead}" em ${chat}`); }
   }
 
-  if (acao === 'consultar' || acao === 'encaminhar') avisarCaso(cfg, chat, nome, e, r, acao);
+  if (acao === 'consultar' || acao === 'encaminhar') encaminhar(cfg, chat, nome, e, r, acao);
+}
+
+// caso para o dono; se o agente entendeu um problema técnico com o cliente, abre também a tarefa de correção
+function encaminhar(cfg, chat, nome, e, r, acao) {
+  avisarCaso(cfg, chat, nome, e, r, acao);
+  if (acao === 'encaminhar' && r.tecnico && typeof r.tecnico === 'object' && cfg.fluxoTecnico !== false) {
+    try { registrarTarefa(cfg, chat, nome, e, r); } catch (err) { log(`tarefa técnica falhou ${chat}: ${err.message}`); }
+  }
 }
 
 // abre (ou atualiza) o caso e manda o cartão ao Davi
@@ -578,6 +635,207 @@ async function interpretarDavi(cfg, texto) {
   avisarDavi(cfg, r.resposta || 'Não entendi. Diga para qual cliente e o que mandar, ou use *#N orientação*. Comandos: STATUS, PAUSAR, RETOMAR.');
 }
 
+// ---------- continuidade de assunto (a equipe falou por último, há mais de "humanoHoras") ----------
+const ultimaFalaEquipe = (cfg, chat, assume) => {
+  const aus = textoAusencia();
+  return db.prepare('SELECT texto, ts FROM msgs WHERE chat = ? AND meu = 1 AND ts > ? ORDER BY ts DESC LIMIT 40').all(chat, Math.max(assume, agora() - 60 * 86400))
+    .find((m) => ehHumano(cfg, m.texto, aus))?.ts || 0;
+};
+const quemDe = (chat, e, nome) => `${e?.nome_cliente || nome || 'cliente'} (${numeroDe(chat)})`;
+
+// 'segue' = o agente atende normalmente; 'espera' = não responde agora (enquete enviada, voto pendente ou classificação falhou)
+async function gateContinuidade(cfg, c, e, assume) {
+  const equipeTs = ultimaFalaEquipe(cfg, c.chat, assume);
+  const sair = (campos) => { for (const [k, v] of Object.entries(campos)) db.prepare(`UPDATE agente_chat SET ${k} = ? WHERE chat = ?`).run(v, c.chat); };
+  if (e.cont_estado === 'aguardando' || e.cont_estado === 'avisado') {
+    // a equipe voltou a falar, ou o painel mandou o Dante assumir: a pergunta perdeu o sentido
+    if (equipeTs > e.cont_ts || assume > e.cont_ts) { sair({ cont_estado: null, cont_decidido_ts: Math.max(equipeTs, e.cont_decidido_ts || 0) }); return assume > e.cont_ts ? 'segue' : 'espera'; }
+    const voto = votoContinuidade(db.prepare('SELECT tipo, texto FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').all(c.chat, e.cont_ts));
+    if (!voto) return 'espera';
+    sair({ cont_estado: null, cont_decidido_ts: equipeTs });
+    if (voto === 'ia') {
+      assumirDeVolta(db, c.chat);
+      log(`${c.chat}: continuidade → cliente quer o pré-atendimento`);
+      return 'segue';
+    }
+    db.prepare("UPDATE agente_chat SET escolha = 'humano', prefere_humano_ts = ?, ultimo_ts = ? WHERE chat = ?").run(agora(), c.ult, c.chat);
+    avisarDavi(cfg, `📌 *${quemDe(c.chat, e, c.nome)}* escolheu aguardar você sobre ${e.cont_assunto ? `"${e.cont_assunto}"` : 'o assunto anterior'}.\n\n${e.cont_briefing || ''}`.trim());
+    log(`${c.chat}: continuidade → cliente prefere aguardar a equipe`);
+    return 'espera';
+  }
+  if (cfg.continuidade === false || !precisaChecar({ equipeTs, agora: agora(), humanoHoras: cfg.humanoHoras, dias: cfg.continuidadeDias ?? CONT_DIAS, assume, decididoTs: e.cont_decidido_ts || 0 })) return 'segue';
+  let r;
+  try { r = await chamarClaude(promptContinuidade({ nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, c.chat, 25, (cfg.continuidadeDias ?? CONT_DIAS) + 1), agoraTxt: new Date().toLocaleString('pt-BR') }), 120_000, { turnos: 2 }); }
+  catch (err) { log(`ERRO continuidade ${c.chat}: ${err.message}`); falhou(cfg, err.message); return 'espera'; }
+  log(`continuidade ${c.chat}: ${r.relacao} | ${r.motivo || ''}`);
+  if (r.relacao === 'novo') { sair({ cont_decidido_ts: equipeTs }); return 'segue'; }
+  enfileirarEnquete(cfg, c.chat, c.nome, textoEnqueteContinuidade(r.assunto, r.pessoal !== false), OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
+  sair({ cont_estado: 'aguardando', cont_ts: agora(), cont_briefing: String(r.briefing || '').slice(0, 600), cont_assunto: String(r.assunto || '').slice(0, 80) });
+  return 'espera';
+}
+
+// enquete sem voto depois de "continuidadeEsperaMin": avisa o dono com um briefing (uma vez)
+function continuidadeTimeouts(cfg) {
+  for (const e of db.prepare("SELECT * FROM agente_chat WHERE cont_estado = 'aguardando'").all()) {
+    if (agora() - e.cont_ts < (cfg.continuidadeEsperaMin ?? CONT_ESPERA_MIN) * 60) continue;
+    db.prepare("UPDATE agente_chat SET cont_estado = 'avisado' WHERE chat = ?").run(e.chat);
+    const ult = db.prepare('SELECT texto, transcricao, tipo FROM msgs WHERE chat = ? AND meu = 0 ORDER BY ts DESC LIMIT 1').get(e.chat);
+    const nome = db.prepare('SELECT nome FROM chats WHERE jid = ?').get(e.chat)?.nome;
+    avisarDavi(cfg, briefingSemVoto({ quem: quemDe(e.chat, e, nome), minutos: Math.round((agora() - e.cont_ts) / 60), briefing: e.cont_briefing, ultima: ult?.texto || ult?.transcricao || `[${ult?.tipo}]` }));
+    log(`${e.chat}: continuidade sem voto, Davi avisado`);
+  }
+}
+
+// pergunta do pré-atendimento sem resposta depois de "perguntaEsperaMin": avisa o dono (uma vez) para ele decidir
+function perguntasSemResposta(cfg) {
+  if (!dentroAlerta(cfg)) return;
+  for (const e of db.prepare('SELECT * FROM agente_chat WHERE pend_ts > 0').all()) {
+    if (agora() - e.pend_ts < (cfg.perguntaEsperaMin ?? 20) * 60) continue;
+    db.prepare('UPDATE agente_chat SET pend_ts = 0 WHERE chat = ?').run(e.chat);
+    if (db.prepare('SELECT 1 FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? LIMIT 1').get(e.chat, e.pend_ts)) continue; // respondeu e o ciclo ainda não processou
+    const ult = db.prepare('SELECT texto, transcricao, tipo FROM msgs WHERE chat = ? AND meu = 0 ORDER BY ts DESC LIMIT 1').get(e.chat);
+    const nome = db.prepare('SELECT nome FROM chats WHERE jid = ?').get(e.chat)?.nome;
+    avisarDavi(cfg, `⏳ *${quemDe(e.chat, e, nome)}* não respondeu à pergunta do pré-atendimento (${Math.round((agora() - e.pend_ts) / 60)} min).\nAssunto: ${e.pend_resumo || 'não ficou claro'}\nÚltima mensagem dele: "${String(ult?.texto || ult?.transcricao || `[${ult?.tipo}]`).slice(0, 200)}"\n\nO Dante segue atendendo quando ele responder. Se preferir assumir, escreva você na conversa (eu paro) ou use "Dante assume" no painel.`);
+    log(`${e.chat}: pergunta do pré-atendimento sem resposta, Davi avisado`);
+  }
+}
+
+// ---------- fluxo técnico: bug/ajuste entendido com o cliente -> dono autoriza -> sessão do cliente corrige -> entrega programada ----------
+const PASTA_TAREFAS = join(PATHS.data, 'tarefas');
+const RAIZ_SESSOES = join(homedir(), '.claude', 'projects');
+const normCaminho = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+
+function cartaoTarefa(cfg, id) {
+  const t = buscar(db, id);
+  const ev = (() => { try { return JSON.parse(t.evidencias || '[]'); } catch { return []; } })();
+  const tipo = t.tipo === 'bug' ? 'bug' : t.tipo === 'ajuste_pago' ? 'ajuste (função nova)' : 'ajuste';
+  avisarDavi(cfg, [`🛠️ *T${t.id} · ${tipo}* — ${quemDe(t.chat, null, t.nome)}`, `Robô: ${t.robo || '❓ não identifiquei qual'}`, `Resumo: ${t.resumo}`, '', String(t.pedido).slice(0, 700),
+    ev.length ? `\nEvidências: ${ev.length} arquivo(s) guardado(s)` : '', '',
+    t.robo ? `✅ *T${t.id} autorizo* → aciono o agente do cliente para corrigir` : `🤖 *T${t.id} robo NOME* → me diga qual é o robô`,
+    `❌ *T${t.id} cancelar*`].join('\n'));
+}
+
+function registrarTarefa(cfg, chat, nome, e, r) {
+  const t = r.tecnico;
+  if (!String(t.resumo || t.detalhes || '').trim()) return;
+  const ficha = fichaGuardada(chat);
+  const robo = resolverRobo(ficha?.robos, t.robo);
+  const pasta = pastaRobo(cfg, chat);
+  const midia = normCaminho(join(PATHS.data, 'midia'));
+  const evidencias = (Array.isArray(t.evidencias) ? t.evidencias : []).filter((p) => typeof p === 'string' && normCaminho(p).startsWith(midia) && existsSync(p)).slice(0, 12);
+  const caso = db.prepare("SELECT id FROM agente_caso WHERE chat = ? AND status = 'aberto' ORDER BY id DESC LIMIT 1").get(chat)?.id || null;
+  const aberta = db.prepare("SELECT id FROM agente_tarefa WHERE chat = ? AND status IN ('aguardando_robo','aguardando_autorizacao') ORDER BY id DESC LIMIT 1").get(chat);
+  const tipo = ['bug', 'ajuste', 'ajuste_pago'].includes(t.tipo) ? t.tipo : 'bug';
+  let id;
+  if (aberta) { id = aberta.id; mudar(db, id, { robo, pasta_robo: pasta, tipo, resumo: String(t.resumo || '').slice(0, 500), pedido: String(t.detalhes || '').slice(0, 4000), evidencias: JSON.stringify(evidencias), status: robo ? 'aguardando_autorizacao' : 'aguardando_robo' }); }
+  else id = criarTarefa(db, { chat, nome: r.nome_cliente || e.nome_cliente || nome, casoId: caso, robo, pastaRobo: pasta, tipo, resumo: t.resumo, pedido: t.detalhes, evidencias });
+  cartaoTarefa(cfg, id);
+  log(`tarefa T${id} ${tipo} (${robo || 'robô a definir'}) ${chat}`);
+}
+
+const MOTIVO_SESSAO = { 'sem-nome': 'não sei o nome do cliente', nenhuma: 'nenhuma pasta de sessão bate com o nome', varias: 'achei várias sessões parecidas', 'sem-cwd': 'a sessão não informa a pasta de trabalho', 'sem-pasta': 'a pasta de sessões não existe' };
+
+function iniciarTarefa(cfg, id) {
+  const t = buscar(db, id);
+  const ficha = fichaGuardada(t.chat);
+  const e = estadoChat(t.chat);
+  const s = acharSessao({ raiz: RAIZ_SESSOES, nomes: [ficha?.nome, e.nome_cliente, ficha?.pasta, t.nome], dica: t.sessao_dica || '' });
+  if (!s.ok) {
+    mudar(db, id, { status: 'aguardando_sessao' });
+    avisarDavi(cfg, `🔎 T${id}: não achei o agente (a sessão do Claude Code) de ${t.nome || 'o cliente'}: ${MOTIVO_SESSAO[s.motivo] || s.motivo}${s.candidatos?.length ? ` (${s.candidatos.map((x) => x.replace(/^.*Shared-Projects-MetaTrader-/, '')).join(' | ')})` : ''}.\nMe diga o nome do agente: *T${id} sessao NOME*`);
+    return;
+  }
+  mkdirSync(PASTA_TAREFAS, { recursive: true });
+  const saida = join(PASTA_TAREFAS, `T${id}.out`);
+  const prompt = promptCorrecao(t, { pastaRobo: t.pasta_robo, pastaEntregas: cfg.pastaEntregas });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(ANTHROPIC_|CLAUDECODE$|CLAUDE_CODE_)/.test(k)));
+  const args = ['-p', '--resume', s.sessaoId, '--output-format', 'json', '--permission-mode', 'acceptEdits',
+    '--allowedTools', 'Read,Edit,Write,Glob,Grep,Bash', '--disallowedTools', 'Bash(git push:*),Bash(git commit:*),Bash(curl:*),Bash(rm:*),Bash(del:*),WebFetch,WebSearch'];
+  if (t.pasta_robo) args.push('--add-dir', t.pasta_robo);
+  const fo = openSync(saida, 'w'), fe = openSync(join(PASTA_TAREFAS, `T${id}.err`), 'w');
+  const p = spawn(CLAUDE, args, { cwd: s.cwd, windowsHide: true, env, detached: true, stdio: ['pipe', fo, fe] });
+  p.stdin.end(prompt);
+  p.unref();
+  closeSync(fo); closeSync(fe);
+  mudar(db, id, { status: 'em_correcao', sessao_cwd: s.cwd, sessao_id: s.sessaoId, pid: p.pid });
+  avisarDavi(cfg, `🚀 T${id}: acionei o agente ${s.pasta.replace(/^.*Shared-Projects-MetaTrader-/, '')} para corrigir o ${t.robo}. Te aviso quando terminar.`);
+  log(`tarefa T${id}: sessão ${s.sessaoId} (${s.cwd}) pid ${p.pid}`);
+}
+
+// confere as correções em andamento e as entregas programadas
+function verificarTarefas(cfg) {
+  for (const t of db.prepare("SELECT * FROM agente_tarefa WHERE status = 'em_correcao'").all()) {
+    const vivo = t.pid && processoVivo(t.pid);
+    if (vivo && agora() - t.atualizado < 90 * 60) continue;
+    if (vivo) { try { process.kill(t.pid); } catch {} }
+    let res = null;
+    try { const j = JSON.parse(readFileSync(join(PASTA_TAREFAS, `T${t.id}.out`), 'utf8')); const txt = String(j.result || ''); res = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch {}
+    if (res?.ok) {
+      const arquivos = (res.arquivos || []).filter((f) => typeof f === 'string' && existsSync(f));
+      mudar(db, t.id, { status: 'pronta', resultado: JSON.stringify(res), arquivos: JSON.stringify(arquivos) });
+      avisarDavi(cfg, `✅ *T${t.id} pronta* (${t.robo}${res.versao ? ` v${res.versao}` : ''}) — ${t.nome || ''}\nCausa: ${res.causa || '-'}\nCorreção: ${res.correcao || '-'}\nArquivos: ${arquivos.length ? arquivos.map((f) => basenameDe(f)).join(', ') : 'nenhum encontrado!'}\n${res.observacoes ? `Obs.: ${res.observacoes}\n` : ''}\nQuando entrego ao cliente? *T${t.id} entregar 2 dias* (16h) · *T${t.id} entregar 03/11 16:30* · *T${t.id} entregar agora*\nO código fica sem commit até você aprovar.`);
+      log(`tarefa T${t.id} pronta`);
+    } else {
+      mudar(db, t.id, { status: 'falhou', resultado: JSON.stringify(res || { motivo: 'sem resposta válida' }) });
+      avisarDavi(cfg, `⚠️ T${t.id}: o agente de ${t.nome || 'o cliente'} não terminou (${res?.motivo || 'sem resposta válida'}). Veja a sessão dele; para tentar de novo: *T${t.id} autorizo*.`);
+      log(`tarefa T${t.id} falhou`);
+    }
+  }
+  for (const t of db.prepare("SELECT * FROM agente_tarefa WHERE status = 'entrega_programada' AND entrega_ts < ?").all(agora() - 600)) {
+    mudar(db, t.id, { status: 'entregue' });
+    if (t.caso_id) db.prepare("UPDATE agente_caso SET status = 'respondido', fechado = ? WHERE id = ? AND status = 'aberto'").run(agora(), t.caso_id);
+    avisarDavi(cfg, `📦 T${t.id} entregue a ${t.nome || 'o cliente'} (${t.robo}). Lembre de registrar na planilha Works do Notion.`);
+  }
+}
+const basenameDe = (f) => String(f).split(/[\\/]/).pop();
+
+// comandos do dono: "T3 autorizo", "T3 robo EA MFP", "T3 sessao mailson", "T3 entregar 2 dias", "T3 cancelar"
+function comandoTarefa(cfg, cmd) {
+  const t = buscar(db, cmd.id);
+  if (!t) { avisarDavi(cfg, `Não existe a tarefa T${cmd.id}.`); return; }
+  if (cmd.acao === 'cancelar') {
+    if (t.pid && t.status === 'em_correcao') { try { process.kill(t.pid); } catch {} }
+    mudar(db, t.id, { status: 'cancelada' });
+    avisarDavi(cfg, `❌ T${t.id} cancelada.`);
+    return;
+  }
+  if (cmd.acao === 'robo') {
+    if (!cmd.resto) { avisarDavi(cfg, `Faltou o nome do robô: *T${t.id} robo EA MFP*`); return; }
+    const robo = resolverRobo(fichaGuardada(t.chat)?.robos, cmd.resto) || cmd.resto;
+    mudar(db, t.id, { robo, status: 'aguardando_autorizacao' });
+    cartaoTarefa(cfg, t.id);
+    return;
+  }
+  if (cmd.acao === 'sessao') {
+    if (!cmd.resto) { avisarDavi(cfg, `Faltou o nome do agente: *T${t.id} sessao Mailson*`); return; }
+    if (!t.robo) { mudar(db, t.id, { sessao_dica: cmd.resto }); avisarDavi(cfg, `Anotei. Falta o robô: *T${t.id} robo NOME*.`); return; }
+    mudar(db, t.id, { sessao_dica: cmd.resto, status: 'autorizada' });
+    iniciarTarefa(cfg, t.id);
+    return;
+  }
+  if (cmd.acao === 'autorizar') {
+    if (!t.robo) { avisarDavi(cfg, `Antes preciso saber o robô: *T${t.id} robo NOME*.`); return; }
+    if (!['aguardando_autorizacao', 'aguardando_sessao', 'falhou'].includes(t.status)) { avisarDavi(cfg, `T${t.id} está em "${t.status}"; não dá para autorizar agora.`); return; }
+    mudar(db, t.id, { status: 'autorizada' });
+    iniciarTarefa(cfg, t.id);
+    return;
+  }
+  if (cmd.acao === 'entregar') {
+    if (t.status !== 'pronta') { avisarDavi(cfg, `T${t.id} está em "${t.status}"; só entrego quando estiver pronta.`); return; }
+    const ts = quandoEntregar(cmd.resto);
+    if (!ts) { avisarDavi(cfg, `Não entendi quando. Exemplos: *T${t.id} entregar 2 dias*, *T${t.id} entregar 03/11 16:30*, *T${t.id} entregar agora*.`); return; }
+    const res = (() => { try { return JSON.parse(t.resultado || '{}'); } catch { return {}; } })();
+    const arquivos = (() => { try { return JSON.parse(t.arquivos || '[]'); } catch { return []; } })().filter((f) => existsSync(f));
+    if (!arquivos.length) { avisarDavi(cfg, `T${t.id}: não achei os arquivos da entrega. Confira a sessão do cliente.`); return; }
+    const msg = String(res.mensagem_cliente || 'Segue a versão corrigida. Qualquer coisa, me avisa por aqui.').trim().slice(0, 1200);
+    if (PROIBIDO.test(msg)) { avisarDavi(cfg, `T${t.id}: a mensagem de entrega cita algo proibido (preço, nome interno, IA). Ajuste e mande de novo ou escreva você mesmo.`); return; }
+    db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, ?, NULL, ?, ?)').run(t.chat, t.nome, paraCliente(cfg, msg), ts, agora());
+    db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?, ?, NULL, ?, ?, ?)').run(t.chat, t.nome, JSON.stringify(arquivos), ts + 5, agora());
+    mudar(db, t.id, { status: 'entrega_programada', entrega_ts: ts });
+    avisarDavi(cfg, `📅 T${t.id} programada para ${new Date(ts * 1000).toLocaleString('pt-BR')}: mensagem + ${arquivos.map(basenameDe).join(', ')}.`);
+  }
+}
+
 // ---------- regras ensinadas pelo dono (ficam na pasta de dados, entram em todo prompt de atendimento) ----------
 const ARQ_REGRAS = join(PATHS.data, 'agente-regras.json');
 function lerRegras() { try { return JSON.parse(readFileSync(ARQ_REGRAS, 'utf8')); } catch { return []; } }
@@ -612,6 +870,9 @@ async function tratarDavi(cfg, m) {
     avisarDavi(cfg, `🗑️ Apaguei a regra ${md[1]}: "${fora}"`);
     return;
   }
+  // fluxo técnico: "T3 autorizo", "T3 robo EA MFP", "T3 sessao mailson", "T3 entregar 2 dias", "T3 cancelar"
+  const ct = lerComando(t);
+  if (ct) { comandoTarefa(cfg, ct); return; }
   // envio pedido em texto livre aguardando confirmação
   const pend = (() => { try { const p = JSON.parse(kv.get('pendente') || 'null'); return p && agora() - p.criado < 1800 ? p : null; } catch { return null; } })();
   if (pend && /^(SIM|S|OK|PODE|CONFIRMO|CONFIRMA|MANDA)[.!]?$/.test(T)) {
@@ -758,6 +1019,9 @@ async function ciclo() {
     if (kv.get('pausado') === '1' || Date.now() < esperarAte) return;
     lembrarCasos(cfg);
     avaliacoesPendentes(cfg);
+    continuidadeTimeouts(cfg);
+    perguntasSemResposta(cfg);
+    try { verificarTarefas(cfg); } catch (err) { log('erro nas tarefas', err.message); }
 
     // 2) clientes com mensagem nova (privado, dentro do período, fora das listas)
     const lim = agora() - DEBOUNCE_S;
@@ -815,6 +1079,8 @@ async function ciclo() {
         continue;
       }
       if (e.humano) db.prepare('UPDATE agente_chat SET humano = 0 WHERE chat = ?').run(c.chat);
+      // a equipe falou por último há mais tempo: confere se é o mesmo assunto antes de entrar
+      if (await gateContinuidade(cfg, c, estadoChat(c.chat), assume) === 'espera') continue;
       await atenderCliente(cfg, c.chat, c.nome, c.ult);
     }
     resumoDiario(cfg);

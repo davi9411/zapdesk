@@ -49,7 +49,8 @@ test('prompt do cliente muda com evento, sugestão e espera longa', () => {
   assert.match(normal, /no máximo 3 passos por mensagem/);
   assert.match(promptCliente({ ...base, sugestao: true }), /SUGESTÃO/);
   assert.match(promptCliente({ ...base, esperaMin: 180 }), /3 horas/);
-  assert.doesNotMatch(promptCliente({ ...base, esperaMin: 5 }), /desculpas pela demora/);
+  assert.doesNotMatch(promptCliente({ ...base, esperaMin: 5 }), /comece pedindo desculpas/);
+  assert.match(promptCliente({ ...base, esperaMin: 5 }), /NÃO peça desculpas pela demora/);
 });
 
 test('prompt de comando do dono lista etiquetas e ações', () => {

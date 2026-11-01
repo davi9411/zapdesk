@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { decryptPollVote } from '@whiskeysockets/baileys';
 
 // opções da escolha do primeiro contato (o número na frente permite responder só "1" ou "2")
-export const OPCOES_ESCOLHA = ['1 - Seguir agora com o pré-atendimento', '2 - Aguardar o atendimento da equipe'];
+export const OPCOES_ESCOLHA = ['1 - Seguir com o pré-atendimento do Dante', '2 - Aguardar o retorno da equipe DS Trade'];
 export const PERGUNTA_ESCOLHA = 'Como prefere seguir?';
 // avaliação no fim de um pré-atendimento que o agente resolveu sozinho (fase de testes)
 export const OPCOES_NOTA = ['Nota 0', 'Nota 1', 'Nota 2', 'Nota 3', 'Nota 4', 'Nota 5'];
