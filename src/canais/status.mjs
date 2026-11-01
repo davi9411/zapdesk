@@ -62,26 +62,59 @@ export function audienciaDoBanco(db, cfg, meuJid) {
   return montarAudiencia(chats, etiquetasDoChat, cfg, meuJid);
 }
 
-async function buscar(url, { fetchFn, timeoutMs = 20_000 }) {
-  const r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+// Timeout, queda de conexão ou erro do servidor (5xx/429): problema passageiro de rede, NÃO conta como tentativa.
+// (O leitor roda num PC comum: a rede oscila e, antes, 3 timeouts seguidos travavam o status do dia inteiro.)
+export class ErroRede extends Error {}
+const CODIGOS_REDE = new Set(['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH',
+  'EHOSTUNREACH', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+const ehErroDeRede = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError' || CODIGOS_REDE.has(e?.cause?.code) || CODIGOS_REDE.has(e?.code);
+
+async function buscar(url, { fetchFn, timeoutMs = 30_000 }) {
+  let r;
+  try { r = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' }); }
+  catch (e) {
+    if (ehErroDeRede(e)) throw new ErroRede(`sem resposta de ${new URL(url).host} (${e.name})`);
+    throw e;
+  }
   if (r.status === 404) return null;
+  if (r.status >= 500 || r.status === 429) throw new ErroRede(`HTTP ${r.status} em ${new URL(url).host}`);
   if (!r.ok) throw new Error(`HTTP ${r.status} em ${url}`);
   return r;
 }
 
-// Confere o manifesto do dia e baixa a imagem. Retorna {buf} ou {espera} (ainda não publicado).
+// A legenda do status pode vir no manifesto (ex.: link da matéria do dia). Só texto curto e links dos nossos endereços.
+const HOSTS_LEGENDA = new Set(['www.dstrade.com.br', 'dstrade.com.br', 't.me']);
+export function legendaSegura(txt) {
+  if (typeof txt !== 'string') return undefined;
+  const t = txt.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim();
+  if (!t || t.length > 500) return undefined;
+  for (const m of t.matchAll(/https?:\/\/\S+/gi)) {
+    let host;
+    try { host = new URL(m[0]).hostname.toLowerCase(); } catch { return undefined; }
+    if (!HOSTS_LEGENDA.has(host)) return undefined;
+  }
+  return t;
+}
+
+// Confere o manifesto do dia e baixa a imagem. Retorna {buf, legenda} ou {espera} (ainda não publicado).
 export async function baixarDoDia(cfg, data, fetchFn = fetch) {
-  const rm = await buscar(`${cfg.base}/story/${data}.json`, { fetchFn });
-  if (!rm) return { espera: 'manifesto ainda não publicado' };
-  const man = await rm.json();
-  if (man?.data !== data) throw new Error('manifesto de outra data');
-  const url = String(man.imagem || '');
-  if (new URL(url).origin !== new URL(cfg.base).origin) throw new Error('imagem fora do endereço configurado');
-  const ri = await buscar(url, { fetchFn, timeoutMs: 60_000 });
-  if (!ri) throw new Error('imagem do manifesto não encontrada');
-  const buf = Buffer.from(await ri.arrayBuffer());
-  if (buf.length < 10_000 || buf.length > MAX_BYTES || !buf.subarray(0, 3).equals(JPEG)) throw new Error(`imagem inválida (${buf.length} bytes)`);
-  return { buf };
+  try {
+    const rm = await buscar(`${cfg.base}/story/${data}.json`, { fetchFn });
+    if (!rm) return { espera: 'manifesto ainda não publicado' };
+    const man = await rm.json();
+    if (man?.data !== data) throw new Error('manifesto de outra data');
+    const url = String(man.imagem || '');
+    if (new URL(url).origin !== new URL(cfg.base).origin) throw new Error('imagem fora do endereço configurado');
+    const ri = await buscar(url, { fetchFn, timeoutMs: 60_000 });
+    if (!ri) throw new Error('imagem do manifesto não encontrada');
+    const buf = Buffer.from(await ri.arrayBuffer());
+    if (buf.length < 10_000 || buf.length > MAX_BYTES || !buf.subarray(0, 3).equals(JPEG)) throw new Error(`imagem inválida (${buf.length} bytes)`);
+    return { buf, legenda: legendaSegura(man.legenda) };
+  } catch (e) {
+    // o timeout também pode estourar enquanto o corpo da resposta ainda está chegando
+    if (!(e instanceof ErroRede) && ehErroDeRede(e)) throw new ErroRede(`sem resposta de ${new URL(cfg.base).host} (${e.name})`);
+    throw e;
+  }
 }
 
 // Uma verificação. Retorna um texto curto com o que aconteceu (para o log e para os testes).
@@ -102,11 +135,15 @@ export async function verificarStatusDoDia({ db, cfg, agora = new Date(), fetchF
     // grava "enviando" ANTES: se algo cair no meio, não repete o status (melhor perder um dia que postar duas vezes)
     db.prepare("INSERT INTO status_postado (data, estado, tentativas, ts, n, erro) VALUES (?, 'enviando', ?, ?, ?, NULL) ON CONFLICT(data) DO UPDATE SET estado = 'enviando', tentativas = excluded.tentativas, ts = excluded.ts, n = excluded.n, erro = NULL").run(data, tent, ts, jids.length);
     tentouEnviar = true;
-    await enviar(dia.buf, cfg.legenda, jids);
+    await enviar(dia.buf, dia.legenda ?? cfg.legenda, jids);
     db.prepare("UPDATE status_postado SET estado = 'enviado' WHERE data = ?").run(data);
     log(`status ${data} postado para ${jids.length} contato(s)`);
     return `enviado (${jids.length})`;
   } catch (e) {
+    if (e instanceof ErroRede) { // rede oscilando: não gasta tentativa nem marca falha, tenta de novo no próximo minuto
+      log(`status ${data}: ${e.message}; tenta de novo`);
+      return `sem rede: ${e.message}`;
+    }
     // erro no envio em si pode ter chegado a sair: no máximo mais UMA tentativa (evita status repetido)
     const gasto = tentouEnviar ? Math.max(tent, TENTATIVAS_MAX - 1) : tent;
     db.prepare("INSERT INTO status_postado (data, estado, tentativas, ts, n, erro) VALUES (?, 'falhou', ?, ?, 0, ?) ON CONFLICT(data) DO UPDATE SET estado = 'falhou', tentativas = excluded.tentativas, ts = excluded.ts, erro = excluded.erro").run(data, gasto, ts, String(e.message).slice(0, 200));

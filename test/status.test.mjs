@@ -104,7 +104,7 @@ test('falha de download tenta de novo; depois de 3 tentativas para; erro no envi
   const db = bancoComContatos();
   db.exec('DELETE FROM status_postado');
   const data = dataLocal(quinta8h);
-  const baixaFalha = { db, cfg: cfgArq(), agora: quinta8h, meuJid: 'eu@s.whatsapp.net', enviar: async () => {}, fetchFn: async () => resp(500) };
+  const baixaFalha = { db, cfg: cfgArq(), agora: quinta8h, meuJid: 'eu@s.whatsapp.net', enviar: async () => {}, fetchFn: async () => resp(403) };
   for (let i = 0; i < 3; i++) assert.match(await verificarStatusDoDia(baixaFalha), /^falhou/);
   assert.match(await verificarStatusDoDia(baixaFalha), /já tratado \(falhou\)/);
 
@@ -115,4 +115,52 @@ test('falha de download tenta de novo; depois de 3 tentativas para; erro no envi
   await verificarStatusDoDia(envioFalha);
   assert.match(await verificarStatusDoDia(envioFalha), /já tratado/);
   assert.equal(chamadas, 2);
+});
+
+test('rede oscilando (timeout, queda, erro 5xx) não gasta tentativa nem trava o dia', async () => {
+  const db = bancoComContatos();
+  db.exec('DELETE FROM status_postado');
+  const data = dataLocal(quinta8h);
+  const enviados = [];
+  const base = { db, cfg: cfgArq(), agora: quinta8h, meuJid: 'eu@s.whatsapp.net', enviar: async (buf) => enviados.push(buf.length) };
+  const timeout = async () => { const e = new Error('The operation was aborted due to timeout'); e.name = 'TimeoutError'; throw e; };
+  const queda = async () => { const e = new TypeError('fetch failed'); e.cause = { code: 'ECONNRESET' }; throw e; };
+  for (const fetchFn of [timeout, queda, async () => resp(503), timeout, queda, async () => resp(429)]) {
+    assert.match(await verificarStatusDoDia({ ...base, fetchFn }), /^sem rede/);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM status_postado').get().n, 0, 'nenhuma falha registrada');
+  assert.match(await verificarStatusDoDia({ ...base, fetchFn: fetchDoDia(data) }), /^enviado/, 'depois de 6 erros de rede ainda posta');
+  assert.equal(enviados.length, 1);
+});
+
+test('timeout que estoura enquanto o corpo da resposta chega também é erro de rede', async () => {
+  const db = bancoComContatos();
+  db.exec('DELETE FROM status_postado');
+  const data = dataLocal(quinta8h);
+  const fetchFn = async (url) => (url.endsWith('.json')
+    ? { status: 200, ok: true, json: async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; } }
+    : resp(404));
+  const r = await verificarStatusDoDia({ db, cfg: cfgArq(), agora: quinta8h, meuJid: 'eu@s.whatsapp.net', fetchFn, enviar: async () => { throw new Error('não deveria enviar'); } });
+  assert.match(r, /^sem rede/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM status_postado').get().n, 0);
+  assert.ok(data);
+});
+
+test('legenda do manifesto vale no lugar da fixa, só com links dos nossos endereços', async () => {
+  const db = bancoComContatos();
+  const data = dataLocal(quinta8h);
+  const base = { db, cfg: cfgArq({ legenda: 'legenda fixa https://t.me/dstradenoticias' }), agora: quinta8h, meuJid: 'eu@s.whatsapp.net' };
+  const casos = [
+    ['📰 Edição completa: https://www.dstrade.com.br/noticias/2026-10-29-brief-do-mercado\n📲 https://t.me/dstradenoticias', null],
+    ['clique em https://site-malicioso.example/x', 'legenda fixa https://t.me/dstradenoticias'],
+    ['x'.repeat(501), 'legenda fixa https://t.me/dstradenoticias'],
+    [undefined, 'legenda fixa https://t.me/dstradenoticias'],
+  ];
+  for (const [legendaManifesto, esperada] of casos) {
+    db.exec('DELETE FROM status_postado');
+    let usada;
+    const manifesto = { data, imagem: `${BASE}/story/${data}.jpg`, ...(legendaManifesto === undefined ? {} : { legenda: legendaManifesto }) };
+    await verificarStatusDoDia({ ...base, fetchFn: fetchDoDia(data, { manifesto }), enviar: async (buf, legenda) => { usada = legenda; } });
+    assert.equal(usada, esperada ?? legendaManifesto);
+  }
 });
