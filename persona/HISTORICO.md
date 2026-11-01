@@ -106,3 +106,7 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
   na hora. Ativo e timeframe saem da linha do log "robô (ATIVO,TF)"; só pergunta ao cliente se não aparecer. A tarefa
   técnica leva ativo, timeframe, .set e trecho do log para a sessão do cliente reproduzir no testador — `aprendidas.md`,
   `tecnico.md`, `agente.mjs`.
+- **Simplificar a vida do cliente** (pedido do Davi, 01/11): o agente é objetivo e curto, não pede print, exemplos nem
+  "casos que deram certo e errado" quando o cliente já mandou vídeo/áudio/texto; sugere uma opção pronta se o cliente
+  estiver confuso. Em pedido de robô/estratégia nova pergunta só o técnico (stop loss, TP, break even, ativo e tempo
+  gráfico) e encaminha — `estilo.md`, `atendimento.md`, `tecnico.md`.

@@ -161,3 +161,12 @@ test('prompt: print vale para painel/gráfico, erro de robô é log, e ativo/tim
   assert.match(p, /nome do robô \(ATIVO,TIMEFRAME\)/);
   assert.match(p, /"ativo":".*","timeframe":".*","set":".*","trecho_log":/);
 });
+
+test('prompt: simplificar a vida do cliente e pedido de robô novo só com perguntas técnicas', () => {
+  const p = promptCliente({ nome: 'Dante', empresa: 'DS Trade', conversa: 'x', agoraTxt: 'hoje' });
+  assert.match(p, /SIMPLIFIQUE a vida do cliente/);
+  assert.match(p, /Nunca peça\s+print, exemplos, casos que deram certo ou errado/);
+  assert.match(p, /PEDIDO DE ROBÔ OU ESTRATÉGIA NOVA/);
+  assert.match(p, /onde fica o stop loss, onde fica o\s+alvo \(TP\), se terá break even/);
+  assert.doesNotMatch(p, /peça print ou vídeo, nome e versão do robô/);
+});
