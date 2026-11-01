@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { tirarDesculpaDemora, admiteNaoVer } from '../src/agente/higiene.mjs';
+import { tirarDesculpaDemora, admiteNaoVer, copiaLegivel } from '../src/agente/higiene.mjs';
 import { precisaChecar, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from '../src/agente/continuidade.mjs';
 import { resolverRobo, criarTabelaTarefas, criarTarefa, buscar, mudar, acharSessao, quandoEntregar, lerComando, promptCorrecao } from '../src/agente/tarefas.mjs';
 import { promptCliente } from '../src/agente/prompts.mjs';
@@ -138,4 +138,26 @@ test('prompt: conversa recente, entendeu=false e janela ampliada', () => {
   assert.match(normal, /marque "entendeu": false/);
   assert.match(normal, /"entendeu":true/);
   assert.match(promptCliente({ ...base, janelaAmpla: true }), /AMPLIADA com mensagens mais antigas/);
+});
+
+test('logs e .set do MT5 (UTF-16) ganham uma cópia legível e a regra "log, não print" está no prompt', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'log-'));
+  const arq = join(dir, 'x.plain');
+  writeFileSync(arq, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Saldo virtual iniciado em 100.00\r\n', 'utf16le')]));
+  const dest = copiaLegivel(arq, '20261025.log');
+  assert.match(readFileSync(dest, 'utf8'), /^Saldo virtual iniciado em 100\.00/);
+  assert.equal(copiaLegivel(arq, 'foto.jpg'), null);
+  assert.equal(copiaLegivel(join(dir, 'nao-existe'), 'a.log'), null);
+  const p = promptCliente({ nome: 'Dante', empresa: 'DS Trade', conversa: 'x', agoraTxt: 'hoje' });
+  assert.match(p, /LOG, não print/);
+  assert.match(p, /youtube\.com\/watch\?v=ZYLJ_rOGjZc/);
+  assert.doesNotMatch(p, /pedindo prints das abas "Experts"/);
+});
+
+test('prompt: print vale para painel/gráfico, erro de robô é log, e ativo/timeframe saem do log', () => {
+  const p = promptCliente({ nome: 'Dante', empresa: 'DS Trade', conversa: 'x', agoraTxt: 'hoje' });
+  assert.match(p, /ver o PAINEL do robô/);
+  assert.match(p, /ERROS e comportamento do robô.*sempre log/s);
+  assert.match(p, /nome do robô \(ATIVO,TIMEFRAME\)/);
+  assert.match(p, /"ativo":".*","timeframe":".*","set":".*","trecho_log":/);
 });

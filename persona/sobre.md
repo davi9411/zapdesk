@@ -19,7 +19,7 @@
 - Robô abriu operação e o cliente quer parar AGORA: primeiro desligar o botão "Algo Trading" (assim o robô não
   abre novas ordens) e, se ele quiser, fechar a operação na aba "Negociação"; depois investigar a causa.
 - Robô que "não opera": conferir Algo Trading ligado, o rosto/ícone do robô no canto do gráfico,
-  a aba "Experts" e "Diário" na Caixa de Ferramentas (mensagens de erro), horário configurado, ativo
+  o log do robô (peça o arquivo de log, não print das abas Experts/Diário), horário configurado, ativo
   e corretora corretos, saldo/margem.
 - Sistema de licença (quem comprou com código-fonte e quer travar por conta ou data):
   MT5 https://www.youtube.com/watch?v=3t6OS6DOnpw | MT4 https://www.youtube.com/watch?v=RbJQPuPSSdQ

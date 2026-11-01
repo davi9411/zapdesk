@@ -101,3 +101,8 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
   última mensagem, para decidir se o Dante segue ou se ele assume — `agente.mjs`, `prompts.mjs`.
 - **Enquete de continuidade**: fala "com o Davi" quando o assunto era uma conversa direta com ele e "com a equipe da
   DS Trade" quando era algo genérico — `continuidade.mjs`.
+- **Log em vez de print para erros do robô** (pedido do Davi, 01/11): o agente pede o log do dia (vídeo "Como obter um log do
+  robô") e o .set, e lê os dois (cópia em UTF-8). Print só para o painel do robô, a tela do gráfico ou uma janela de erro
+  na hora. Ativo e timeframe saem da linha do log "robô (ATIVO,TF)"; só pergunta ao cliente se não aparecer. A tarefa
+  técnica leva ativo, timeframe, .set e trecho do log para a sessão do cliente reproduzir no testador — `aprendidas.md`,
+  `tecnico.md`, `agente.mjs`.

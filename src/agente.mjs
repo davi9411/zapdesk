@@ -36,7 +36,7 @@ import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
-import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi } from './agente/higiene.mjs';
+import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi, copiaLegivel } from './agente/higiene.mjs';
 import { CONT_DIAS, CONT_ESPERA_MIN, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
 import { criarTabelaTarefas, criarTarefa, mudar, buscar, resolverRobo, acharSessao, promptCorrecao, quandoEntregar, lerComando } from './agente/tarefas.mjs';
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -166,7 +166,7 @@ function textoConversa(cfg, chat, limite = 25, dias = 0) {
     if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${fala}"` : '(sem transcrição)'}`;
     else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}${framesDe(m) ? `, frames: ${framesDe(m)}` : ''}] ${m.transcricao ? `fala: "${fala}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
-    else if (m.tipo === 'documento') t = `[arquivo: ${m.texto || 'documento'}]`;
+    else if (m.tipo === 'documento') { const leg = m.meu ? null : copiaLegivel(m.arquivo, m.texto); t = `[arquivo: ${m.texto || 'documento'}${leg ? `, texto legível (use Read): ${leg}` : ''}]`; }
     else if (m.tipo === 'figurinha') t = '[figurinha]';
     else if (m.tipo === 'voto') t = `[votou na enquete: "${m.texto}"]`;
     else if (m.tipo === 'enquete') t = `${corpoEnquete(cfg.nome, cfg.empresa, (m.texto || '').replace(/^enquete: /, ''))} [enviada como enquete]`;
@@ -709,7 +709,7 @@ function cartaoTarefa(cfg, id) {
   const t = buscar(db, id);
   const ev = (() => { try { return JSON.parse(t.evidencias || '[]'); } catch { return []; } })();
   const tipo = t.tipo === 'bug' ? 'bug' : t.tipo === 'ajuste_pago' ? 'ajuste (função nova)' : 'ajuste';
-  avisarDavi(cfg, [`🛠️ *T${t.id} · ${tipo}* — ${quemDe(t.chat, null, t.nome)}`, `Robô: ${t.robo || '❓ não identifiquei qual'}`, `Resumo: ${t.resumo}`, '', String(t.pedido).slice(0, 700),
+  avisarDavi(cfg, [`🛠️ *T${t.id} · ${tipo}* — ${quemDe(t.chat, null, t.nome)}`, `Robô: ${t.robo || '❓ não identifiquei qual'}`, `Resumo: ${t.resumo}`, '', String(t.pedido).slice(0, 900),
     ev.length ? `\nEvidências: ${ev.length} arquivo(s) guardado(s)` : '', '',
     t.robo ? `✅ *T${t.id} autorizo* → aciono o agente do cliente para corrigir` : `🤖 *T${t.id} robo NOME* → me diga qual é o robô`,
     `❌ *T${t.id} cancelar*`].join('\n'));
@@ -724,11 +724,13 @@ function registrarTarefa(cfg, chat, nome, e, r) {
   const midia = normCaminho(join(PATHS.data, 'midia'));
   const evidencias = (Array.isArray(t.evidencias) ? t.evidencias : []).filter((p) => typeof p === 'string' && normCaminho(p).startsWith(midia) && existsSync(p)).slice(0, 12);
   const caso = db.prepare("SELECT id FROM agente_caso WHERE chat = ? AND status = 'aberto' ORDER BY id DESC LIMIT 1").get(chat)?.id || null;
+  // o que a sessão do cliente precisa para reproduzir no testador: ativo, timeframe, .set e o trecho do log
+  const pedidoCompleto = `${String(t.detalhes || '').trim()}\n\nPARA REPRODUZIR NO TESTADOR:\n- Ativo: ${t.ativo || 'NÃO INFORMADO (veja no log)'}\n- Timeframe: ${t.timeframe || 'NÃO INFORMADO (veja no log)'}\n- Arquivo .set usado: ${t.set || 'não enviado'}\n- Trecho do log: ${String(t.trecho_log || 'não informado').slice(0, 1200)}`.slice(0, 4000);
   const aberta = db.prepare("SELECT id FROM agente_tarefa WHERE chat = ? AND status IN ('aguardando_robo','aguardando_autorizacao') ORDER BY id DESC LIMIT 1").get(chat);
   const tipo = ['bug', 'ajuste', 'ajuste_pago'].includes(t.tipo) ? t.tipo : 'bug';
   let id;
-  if (aberta) { id = aberta.id; mudar(db, id, { robo, pasta_robo: pasta, tipo, resumo: String(t.resumo || '').slice(0, 500), pedido: String(t.detalhes || '').slice(0, 4000), evidencias: JSON.stringify(evidencias), status: robo ? 'aguardando_autorizacao' : 'aguardando_robo' }); }
-  else id = criarTarefa(db, { chat, nome: r.nome_cliente || e.nome_cliente || nome, casoId: caso, robo, pastaRobo: pasta, tipo, resumo: t.resumo, pedido: t.detalhes, evidencias });
+  if (aberta) { id = aberta.id; mudar(db, id, { robo, pasta_robo: pasta, tipo, resumo: String(t.resumo || '').slice(0, 500), pedido: pedidoCompleto, evidencias: JSON.stringify(evidencias), status: robo ? 'aguardando_autorizacao' : 'aguardando_robo' }); }
+  else id = criarTarefa(db, { chat, nome: r.nome_cliente || e.nome_cliente || nome, casoId: caso, robo, pastaRobo: pasta, tipo, resumo: t.resumo, pedido: pedidoCompleto, evidencias });
   cartaoTarefa(cfg, id);
   log(`tarefa T${id} ${tipo} (${robo || 'robô a definir'}) ${chat}`);
 }

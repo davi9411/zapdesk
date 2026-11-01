@@ -16,6 +16,12 @@
   - robo: nome EXATO do robô na ficha; se não souber qual, deixe vazio.
   - detalhes: passo a passo do que acontece, valores observados, versão, configurações citadas e o resultado esperado.
   - evidencias: caminhos dos frames/prints/arquivos do cliente que mostram o problema.
+- Dados para a equipe SIMULAR o caso: ativo, timeframe, o .set usado, a versão do robô e o trecho do log com o erro.
+  Procure ativo e timeframe no próprio LOG: cada linha traz "nome do robô (ATIVO,TIMEFRAME)", por exemplo "EA X (XAUUSD,M1)".
+  Leia também o .set (parâmetros) e copie o trecho do log que mostra o problema. Só pergunte ao cliente o que não
+  aparecer ou não ficar claro (alguns robôs não escrevem isso no log). Não encaminhe sem ativo e timeframe.
+  Preencha em "tecnico": ativo, timeframe, set (caminho do .set que o cliente enviou), trecho_log (o trecho importante,
+  curto) e coloque nos caminhos de "evidencias" o log e o .set enviados.
 - Ao encaminhar, diga ao cliente, com cordialidade e sem prazo: que entendeu, que deixou tudo registrado e que passou
   para a equipe de desenvolvimento analisar, e que avisa por aqui quando houver retorno. Nunca prometa correção, data,
   versão nova ou arquivo, e nunca fale de valor.

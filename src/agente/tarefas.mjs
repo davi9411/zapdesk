@@ -95,6 +95,7 @@ ${t.pedido}
 ${ev.length ? `EVIDÊNCIAS (arquivos do cliente, só leitura): ${ev.join(' | ')}\n` : ''}${pastaRobo ? `PASTA DO ROBÔ: ${pastaRobo}\n` : ''}
 O QUE FAZER:
 1. Reproduza/entenda a causa no código do robô (leia a ficha/histórico da pasta e as regras do projeto como sempre).
+   Se der, reproduza no testador com o MESMO ativo, timeframe e arquivo .set indicados abaixo e confira o log citado.
 2. Corrija, compile com 0 erros e, se couber, valide no testador. Suba a versão do robô e registre no histórico, como sempre.
 3. NÃO faça commit nem push (o dono aprova depois). NÃO envie nada ao cliente. NÃO mande .md/análises internas na entrega.
 4. Monte o zip e o .ex5 da entrega${pastaEntregas ? ` em ${pastaEntregas}` : ' na pasta de entregas de sempre'}, com os nomes do padrão.
