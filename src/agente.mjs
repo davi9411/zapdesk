@@ -329,9 +329,10 @@ function argsPrompt(cfg, chat, e, sugestao = false, janela = 0) {
 // ---------- conversa que a equipe está atendendo: cliente sem resposta → aviso com sugestão ----------
 async function talvezAlertar(cfg, c, e) {
   if (agora() - c.ult < cfg.semRespostaMin * 60 || (e.alertado_ts || 0) >= c.ult || !dentroAlerta(cfg)) return;
-  db.prepare('UPDATE agente_chat SET alertado_ts = ? WHERE chat = ?').run(c.ult, c.chat);
   let r = null;
   try { r = await chamarClaude(promptCliente(argsPrompt(cfg, c.chat, e, true))); } catch (err) { log(`ERRO sugestão ${c.chat}: ${err.message}`); }
+  // marca DEPOIS da consulta ao modelo: se o agente for reiniciado no meio, o aviso não se perde (tenta de novo no próximo ciclo)
+  db.prepare('UPDATE agente_chat SET alertado_ts = ? WHERE chat = ?').run(c.ult, c.chat);
   if (r?.acao === 'silencio') { log(`sem resposta ${c.chat}, mas não pede resposta`); return; }
   // pagamento, valor, desconto...: quem decide é o dono; o aviso traz a decisão, não um texto para o cliente
   const decidir = r?.acao === 'consultar' && String(r.pergunta_davi || '').trim() ? String(r.pergunta_davi).trim().slice(0, 600) : null;
