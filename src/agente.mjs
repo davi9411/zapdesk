@@ -36,6 +36,7 @@ import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
+import { gerarLembretes, lerLembretes, promptContas, aplicarAcoes, textoConfirmacao, textoLista } from './regras/lembretes.mjs';
 import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi, copiaLegivel } from './agente/higiene.mjs';
 import { CONT_DIAS, CONT_ESPERA_MIN, jaRespondido, rotaContinuidade, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
 import { criarTabelaTarefas, criarTarefa, mudar, buscar, resolverRobo, acharSessao, promptCorrecao, quandoEntregar, lerComando } from './agente/tarefas.mjs';
@@ -1005,6 +1006,39 @@ function pingar(cfg) {
   fetch(leitorOk ? cfg.pingUrl : `${cfg.pingUrl.replace(/\/$/, '')}/fail`, { signal: AbortSignal.timeout(15_000) }).catch((e) => log(`ping falhou: ${e.message}`));
 }
 
+// ---------- contas novas ditas no grupo de lembretes ----------
+// Quem escreve no grupo (os pais ou o Davi) pode anotar, tirar ou pedir a lista de contas; o agente atualiza lembretes.json e confirma no grupo.
+let falhasContas = 0;
+async function aprenderContas() {
+  const cfg = lerLembretes();
+  if (!cfg) return;
+  const agoraS = Math.floor(Date.now() / 1000);
+  const ult = Number(kv.get('lemb_ult') || 0);
+  if (!ult) { kv.set('lemb_ult', agoraS); return; }
+  const msgs = db.prepare("SELECT ts, de, tipo, texto, transcricao FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? ORDER BY ts").all(cfg.chat, ult)
+    .map((m) => ({ ...m, texto: String(m.texto || m.transcricao || '').trim().slice(0, 500) })).filter((m) => m.texto);
+  const ultimoTs = db.prepare('SELECT MAX(ts) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ?').get(cfg.chat, ult)?.t;
+  if (!ultimoTs) return;
+  if (!msgs.length) { kv.set('lemb_ult', ultimoTs); return; }
+  let r;
+  try {
+    r = await chamarClaude(promptContas({ mensagens: msgs.slice(-20), avisos: cfg.avisos, hoje: new Date().toLocaleDateString('pt-BR') }), 120_000, { turnos: 2 });
+    falhasContas = 0;
+  } catch (e) {
+    if (++falhasContas < 3) return; // tenta de novo no próximo ciclo
+    falhasContas = 0; kv.set('lemb_ult', ultimoTs); log(`contas do grupo: desisti depois de 3 falhas (${e.message})`); return;
+  }
+  kv.set('lemb_ult', ultimoTs);
+  const feitos = aplicarAcoes(r?.acoes);
+  const partes = [textoConfirmacao(feitos)];
+  if (r?.listar === true) partes.push(`📋 Contas anotadas:\n${textoLista(lerLembretes().avisos)}`);
+  const texto = partes.filter(Boolean).join('\n\n');
+  if (!texto) return;
+  db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado, tolera_min) VALUES (?, ?, ?, NULL, ?, ?, 60)')
+    .run(cfg.chat, null, texto, agoraS, agoraS);
+  log(`contas do grupo: +${feitos.adicionados.length} -${feitos.removidos.length}${r?.listar ? ' (lista)' : ''}`);
+}
+
 // ---------- ciclo ----------
 let ocupado = false;
 async function ciclo() {
@@ -1016,6 +1050,8 @@ async function ciclo() {
     vigiarLeitor(cfg);
     pingar(cfg);
     try { const n = gerarRotinas(db); if (n) log(`rotinas: ${n} mensagem(ns) na fila`); } catch (e) { log('erro nas rotinas', e.message); }
+    try { const n = gerarLembretes(db, lerLembretes()); if (n) log(`lembretes: ${n} aviso(s) na fila`); } catch (e) { log('erro nos lembretes', e.message); }
+    await aprenderContas().catch((e) => log('erro ao ler contas do grupo', e.message));
     if (!cfg || Date.now() < cfg.ini || Date.now() > cfg.fim) return;
     const iniS = Math.floor(cfg.ini / 1000);
 
@@ -1055,7 +1091,12 @@ async function ciclo() {
       // o cliente preferiu aguardar uma pessoa: o agente não responde por 3 dias (o caso já foi para a equipe)
       const est = estadoChat(c.chat);
       if (est.escolha === 'humano' && agora() - est.prefere_humano_ts < 3 * 86400) {
-        if (c.ult > est.ultimo_ts) db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
+        // o cliente escolheu aguardar a equipe: o agente não responde, mas o dono é avisado (com sugestão ou a decisão) quando
+        // ele escreve e fica sem resposta. Só marca como lido depois do aviso ou se alguém já respondeu.
+        const fim = db.prepare('SELECT meu, ts FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(c.chat);
+        const respondido = !!(fim?.meu && fim.ts > c.ult);
+        if (!respondido && c.ult > (est.alertado_ts || 0)) await talvezAlertar(cfg, c, est);
+        if (respondido || (estadoChat(c.chat).alertado_ts || 0) >= c.ult) db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
         continue;
       }
       const e = estadoChat(c.chat);

@@ -189,6 +189,7 @@ test('prompts: classificação tem "encerrado" e a sugestão leva decisões de p
   const sug = promptCliente({ ...base, sugestao: true });
   assert.match(sug, /NÃO escreva texto para o cliente: use acao="consultar"/);
   assert.match(sug, /só agradece, confirma ou se despede/);
+  assert.match(sug, /cumprimento \(bom dia, oi, tudo bem\?\) merece resposta/);
 });
 
 test('continuidade: mensagem já respondida pelo agente não volta (mas a enquete de continuidade não conta como resposta)', () => {

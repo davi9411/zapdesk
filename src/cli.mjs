@@ -179,8 +179,10 @@ async function enviar() {
   if (o.em && quando <= agora) { console.error('Essa hora já passou.'); process.exit(1); }
   if (!o.em && !pidVivo()) { console.error('Leitor desligado: ligue primeiro (wa ligar) ou use --em para programar.'); process.exit(1); }
 
-  const r = db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado) VALUES (?,?,?,?,?,?)')
-    .run(chat.jid, chat.nome, o.texto === true ? null : (o.texto ?? null), arquivos.length ? JSON.stringify(arquivos) : null, quando, agora);
+  const tolera = o.tolera ? Number(o.tolera) : null; // minutos que o envio programado ainda vale se o leitor estava desligado
+  if (o.tolera && !(tolera > 0)) { console.error('--tolera deve ser um número de minutos maior que zero.'); process.exit(1); }
+  const r = db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado, tolera_min) VALUES (?,?,?,?,?,?,?)')
+    .run(chat.jid, chat.nome, o.texto === true ? null : (o.texto ?? null), arquivos.length ? JSON.stringify(arquivos) : null, quando, agora, tolera);
   const id = Number(r.lastInsertRowid);
   const resumo = `${chat.nome || chat.jid}${o.texto ? ` — "${String(o.texto).slice(0, 60)}"` : ''}${arquivos.length ? ` + ${arquivos.length} arquivo(s)` : ''}`;
   if (o.em) {
@@ -303,7 +305,48 @@ async function statusPostar() {
   }
 }
 
-const CMDS = { reiniciar, ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar, 'status-postar': statusPostar };
+// wa grupo-criar "<nome>" --membros 55DDDNUMERO,55DDDNUMERO [--foto imagem.png]
+async function grupoCriar() {
+  const o = opcoes(resto);
+  const nome = o._.join(' ').trim();
+  const membros = typeof o.membros === 'string' ? [...new Set(o.membros.split(',').map((n) => n.replace(/\D/g, '')).filter(Boolean))] : [];
+  if (!nome || !membros.length || membros.some((n) => !/^\d{10,15}$/.test(n))) { console.error('Uso: wa grupo-criar "<nome>" --membros 55DDDNUMERO,55DDDNUMERO [--foto imagem.png]'); process.exit(1); }
+  if (typeof o.foto === 'string' && !existsSync(o.foto)) { console.error('Foto não encontrada:', o.foto); process.exit(1); }
+  if (!pidVivo()) { console.error('Leitor desligado: o grupo só é criado com ele ligado.'); process.exit(1); }
+  const db = await abrir();
+  const valor = JSON.stringify({ nome, membros, foto: typeof o.foto === 'string' ? resolve(o.foto) : null });
+  const id = Number(db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES ('grupo', 'grupo@novo', ?, strftime('%s','now'))").run(valor).lastInsertRowid);
+  for (let i = 0; i < 120; i++) {
+    await new Promise((res) => setTimeout(res, 500));
+    const s = db.prepare('SELECT status, erro, chat FROM acoes WHERE id = ?').get(id);
+    if (s.status === 'feita') { console.log(`Grupo "${nome}" criado: ${s.chat}`); return; }
+    if (s.status === 'falhou') { console.error(`Falhou: ${s.erro}`); process.exit(1); }
+  }
+  console.error('Sem confirmação em 60 s: o leitor em execução pode ser uma versão antiga. Reinicie-o com o programa atualizado.');
+  process.exit(1);
+}
+
+// wa grupo-adicionar "<nome do grupo>" --membros 55DDDNUMERO,...
+async function grupoAdicionar() {
+  const o = opcoes(resto);
+  const membros = typeof o.membros === 'string' ? [...new Set(o.membros.split(',').map((n) => n.replace(/\D/g, '')).filter(Boolean))] : [];
+  if (!o._.length || !membros.length || membros.some((n) => !/^\d{10,15}$/.test(n))) { console.error('Uso: wa grupo-adicionar "<nome do grupo>" --membros 55DDDNUMERO,...'); process.exit(1); }
+  if (!pidVivo()) { console.error('Leitor desligado: ligue primeiro.'); process.exit(1); }
+  const db = await abrir();
+  const chat = acharChat(db, o._.join(' '));
+  if (!chat.jid.endsWith('@g.us')) { console.error('Isso não é um grupo.'); process.exit(1); }
+  const id = Number(db.prepare("INSERT INTO acoes (tipo, chat, valor, criado) VALUES ('grupo+', ?, ?, strftime('%s','now'))").run(chat.jid, JSON.stringify({ membros })).lastInsertRowid);
+  for (let i = 0; i < 120; i++) {
+    await new Promise((res) => setTimeout(res, 500));
+    const s = db.prepare('SELECT status, erro FROM acoes WHERE id = ?').get(id);
+    if (s.status === 'feita') { console.log(`Adicionado(s) em "${chat.nome}".`); return; }
+    if (s.status === 'falhou') { console.error(`Falhou: ${s.erro}`); process.exit(1); }
+  }
+  console.error('Sem confirmação em 60 s: reinicie o leitor com o programa atualizado (wa reiniciar).');
+  process.exit(1);
+}
+
+const CMDS = { 'grupo-adicionar': grupoAdicionar, reiniciar, ligar, desligar, status, chats, ler, preparar, parear, enviar, fila, cancelar, ausencia, etiquetas, etiqueta, limpar, 'status-postar': statusPostar, 'grupo-criar': grupoCriar };
 if (!CMDS[cmd]) {
   console.log(`wa — leitor local de WhatsApp (somente leitura)
 
@@ -315,6 +358,8 @@ if (!CMDS[cmd]) {
   wa ler <nome> [--horas N]  mostra a conversa (texto, transcrições, caminhos de mídia)
   wa preparar <nome>         transcreve áudios/vídeos e extrai frames (sob demanda)
   wa enviar <nome> --texto "..." [--arquivo f]... [--em "16:30"]   envia (ou programa), sempre por comando explícito
+  (wa enviar aceita --tolera MIN: minutos que o envio programado ainda vale se o leitor estava desligado)
+  wa grupo-criar "<nome>" --membros 55DDDNUMERO,... [--foto img.png]   cria um grupo
   wa fila                    envios pendentes/recentes
   wa cancelar <id>           cancela envio programado
   wa ausencia                mensagem de ausência: período, texto e quem já recebeu

@@ -3,8 +3,10 @@
 export const MIME = { pdf: 'application/pdf', zip: 'application/zip', ex5: 'application/octet-stream', mq5: 'text/plain', set: 'text/plain', txt: 'text/plain', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', mp4: 'video/mp4', ogg: 'audio/ogg', mp3: 'audio/mpeg' };
 
 // Envio programado vencido há mais que o limite NÃO sai (o leitor estava desligado no horário).
+// O item pode trazer a própria tolerância (tolera_min): lembrete de conta ainda vale horas depois.
 export function avaliarItem(it, agora, atrasoMaxS) {
-  if (agora - it.enviar_em > atrasoMaxS) return { acao: 'atrasada', erro: `venceu há ${Math.round((agora - it.enviar_em) / 60)} min com o leitor desligado` };
+  const limite = it.tolera_min > 0 ? it.tolera_min * 60 : atrasoMaxS;
+  if (agora - it.enviar_em > limite) return { acao: 'atrasada', erro: `venceu há ${Math.round((agora - it.enviar_em) / 60)} min com o leitor desligado` };
   return { acao: 'enviar' };
 }
 

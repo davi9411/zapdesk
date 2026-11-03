@@ -75,6 +75,8 @@ export function abrirDb() {
   try { db.exec('ALTER TABLE msgs ADD COLUMN status_texto TEXT'); } catch {}
   // enquete anexada a um envio (JSON {nome, opcoes}) e enquetes enviadas, com o segredo para decifrar os votos
   try { db.exec('ALTER TABLE outbox ADD COLUMN enquete TEXT'); } catch {}
+  // tolerância de atraso do próprio envio programado, em minutos (vazio = a padrão do leitor)
+  try { db.exec('ALTER TABLE outbox ADD COLUMN tolera_min INTEGER'); } catch {}
   db.exec('CREATE TABLE IF NOT EXISTS enquetes (id TEXT PRIMARY KEY, chat TEXT NOT NULL, ts INTEGER NOT NULL, nome TEXT, opcoes TEXT NOT NULL, segredo TEXT NOT NULL)');
   // "digitando"/"gravando áudio" do contato (o leitor assina a presença de quem escreve no privado)
   db.exec('CREATE TABLE IF NOT EXISTS presenca (chat TEXT PRIMARY KEY, estado TEXT, ts INTEGER NOT NULL)');

@@ -121,6 +121,33 @@ async function rodarAcoes() {
         log(`ação #${ac.id} status postado`);
         continue;
       }
+      if (ac.tipo === 'grupo') { // "wa grupo-criar": cria o grupo, adiciona os membros e põe a foto
+        if (db.prepare("UPDATE acoes SET status = 'enviando' WHERE id = ? AND status = 'pendente'").run(ac.id).changes !== 1) continue;
+        const v = JSON.parse(ac.valor);
+        const achados = await sock.onWhatsApp(...v.membros.map((n) => `${n}@s.whatsapp.net`));
+        const jids = (achados || []).filter((r) => r.exists).map((r) => r.jid);
+        if (jids.length !== v.membros.length) throw new Error(`só ${jids.length} de ${v.membros.length} número(s) têm WhatsApp`);
+        const g = await sock.groupCreate(v.nome, jids);
+        upChat.run(g.id, v.nome, 1, Math.floor(Date.now() / 1000));
+        db.prepare("UPDATE acoes SET chat = ? WHERE id = ?").run(g.id, ac.id); // devolve o endereço do grupo ao comando
+        if (v.foto) { try { await sock.updateProfilePicture(g.id, { url: v.foto }); } catch (e) { log(`ação #${ac.id}: grupo criado, mas a foto falhou: ${e.message}`); } }
+        db.prepare("UPDATE acoes SET status = 'feita' WHERE id = ?").run(ac.id);
+        log(`ação #${ac.id} grupo "${v.nome}" criado (${g.id})`);
+        continue;
+      }
+      if (ac.tipo === 'grupo+') { // "wa grupo-adicionar": põe mais gente num grupo que já existe
+        if (db.prepare("UPDATE acoes SET status = 'enviando' WHERE id = ? AND status = 'pendente'").run(ac.id).changes !== 1) continue;
+        const v = JSON.parse(ac.valor);
+        const achados = await sock.onWhatsApp(...v.membros.map((n) => `${n}@s.whatsapp.net`));
+        const jids = (achados || []).filter((r) => r.exists).map((r) => r.jid);
+        if (jids.length !== v.membros.length) throw new Error(`só ${jids.length} de ${v.membros.length} número(s) têm WhatsApp`);
+        const rs = await sock.groupParticipantsUpdate(ac.chat, jids, 'add');
+        const ruim = (rs || []).filter((r) => String(r.status) !== '200');
+        if (ruim.length) throw new Error(`o WhatsApp não adicionou ${ruim.map((r) => `${r.jid} (${r.status})`).join(', ')}`);
+        db.prepare("UPDATE acoes SET status = 'feita' WHERE id = ?").run(ac.id);
+        log(`ação #${ac.id} ${jids.length} pessoa(s) adicionada(s) em ${ac.chat}`);
+        continue;
+      }
       let et = db.prepare('SELECT * FROM etiquetas').all().find((e) => normEtiqueta(e.nome) === normEtiqueta(ac.valor));
       if (ac.tipo === 'etiqueta+') {
         if (!et) {

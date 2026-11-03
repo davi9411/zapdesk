@@ -39,6 +39,12 @@ test('fila: envio programado vencido há mais que o limite não sai', () => {
   assert.equal(r.acao, 'atrasada'); assert.match(r.erro, /60 min/);
 });
 
+test('fila: tolerância própria do item vence a padrão', () => {
+  const agora = 1_000_000;
+  assert.equal(avaliarItem({ enviar_em: agora - 3600, tolera_min: 480 }, agora, 1800).acao, 'enviar');
+  assert.equal(avaliarItem({ enviar_em: agora - 9 * 3600, tolera_min: 480 }, agora, 1800).acao, 'atrasada');
+});
+
 test('fila: plano de envio', () => {
   assert.deepEqual(planoEnvio({ texto: 'oi' }), [{ text: 'oi' }]);
   const um = planoEnvio({ texto: 'segue', arquivos: JSON.stringify(['C:\\x\\EA v1.zip']) });
