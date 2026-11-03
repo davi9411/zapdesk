@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tirarDesculpaDemora, admiteNaoVer, copiaLegivel } from '../src/agente/higiene.mjs';
-import { precisaChecar, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from '../src/agente/continuidade.mjs';
+import { jaRespondido, rotaContinuidade, precisaChecar, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto, promptContinuidade } from '../src/agente/continuidade.mjs';
 import { resolverRobo, criarTabelaTarefas, criarTarefa, buscar, mudar, acharSessao, quandoEntregar, lerComando, promptCorrecao } from '../src/agente/tarefas.mjs';
 import { promptCliente } from '../src/agente/prompts.mjs';
 import { OPCOES_ESCOLHA, perguntaEnquete } from '../src/conector/enquete.mjs';
@@ -169,4 +169,33 @@ test('prompt: simplificar a vida do cliente e pedido de robô novo só com pergu
   assert.match(p, /PEDIDO DE ROBÔ OU ESTRATÉGIA NOVA/);
   assert.match(p, /onde fica o stop loss, onde fica o\s+alvo \(TP\), se terá break even/);
   assert.doesNotMatch(p, /peça print ou vídeo, nome e versão do robô/);
+});
+
+test('continuidade: rota. Despedida = silêncio; equipe falou há pouco = só sugere ao dono; mais antigo = enquete', () => {
+  const dia = 86400;
+  assert.equal(rotaContinuidade({ relacao: 'novo', idadeSeg: 1 * dia }), 'segue');
+  assert.equal(rotaContinuidade({ relacao: 'encerrado', idadeSeg: 1 * dia }), 'silencio');
+  assert.equal(rotaContinuidade({ relacao: 'continuacao', idadeSeg: 1 * dia }), 'sugerir');   // caso do pagamento do cliente, ontem
+  assert.equal(rotaContinuidade({ relacao: 'duvida', idadeSeg: 2 * dia }), 'sugerir');
+  assert.equal(rotaContinuidade({ relacao: 'continuacao', idadeSeg: 4 * dia }), 'enquete');   // caso antigo (indicador, 4 dias)
+  assert.equal(rotaContinuidade({ relacao: 'continuacao', idadeSeg: 2 * dia, recenteDias: 1 }), 'enquete');
+});
+
+test('prompts: classificação tem "encerrado" e a sugestão leva decisões de pagamento ao dono', () => {
+  const base = { nome: 'Dante', empresa: 'DS Trade', conversa: 'x', agoraTxt: 'hoje' };
+  assert.match(promptContinuidade(base), /"encerrado"/);
+  assert.match(promptContinuidade(base), /continuacao\|novo\|encerrado\|duvida/);
+  assert.match(promptContinuidade(base), /comprovante de pagamento.*nunca classifique como "encerrado"/s);
+  const sug = promptCliente({ ...base, sugestao: true });
+  assert.match(sug, /NÃO escreva texto para o cliente: use acao="consultar"/);
+  assert.match(sug, /só agradece, confirma ou se despede/);
+});
+
+test('continuidade: mensagem já respondida pelo agente não volta (mas a enquete de continuidade não conta como resposta)', () => {
+  const doAgente = (x) => String(x).startsWith('*Dante |') || String(x).startsWith('enquete: Dante |');
+  assert.equal(jaRespondido({ meu: 1, ts: 200, texto: '*Dante | Agente IA:*\nQue bom!' }, 100, doAgente), true); // caso encerrado
+  assert.equal(jaRespondido({ meu: 1, ts: 200, texto: 'enquete: Dante | Agente IA:\nVi que você estava tratando de X' }, 100, doAgente), false); // enquete de continuidade
+  assert.equal(jaRespondido({ meu: 1, ts: 50, texto: '*Dante | Agente IA:*\nOi' }, 100, doAgente), false);        // resposta antiga
+  assert.equal(jaRespondido({ meu: 0, ts: 200, texto: 'oi' }, 100, doAgente), false);
+  assert.equal(jaRespondido(null, 100, doAgente), false);
 });

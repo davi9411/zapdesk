@@ -37,7 +37,7 @@ import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
 import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi, copiaLegivel } from './agente/higiene.mjs';
-import { CONT_DIAS, CONT_ESPERA_MIN, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
+import { CONT_DIAS, CONT_ESPERA_MIN, jaRespondido, rotaContinuidade, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
 import { criarTabelaTarefas, criarTarefa, mudar, buscar, resolverRobo, acharSessao, promptCorrecao, quandoEntregar, lerComando } from './agente/tarefas.mjs';
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARQ_CFG = join(PATHS.data, 'agente.json');
@@ -166,7 +166,7 @@ function textoConversa(cfg, chat, limite = 25, dias = 0) {
     if (m.tipo === 'audio') t = `[áudio ${m.dur || '?'}s] ${m.transcricao ? `transcrição: "${fala}"` : '(sem transcrição)'}`;
     else if (m.tipo === 'video') t = `[vídeo ${m.dur || '?'}s${m.texto ? `, legenda "${m.texto}"` : ''}${framesDe(m) ? `, frames: ${framesDe(m)}` : ''}] ${m.transcricao ? `fala: "${fala}"` : ''}`;
     else if (m.tipo === 'imagem') t = `[foto${m.arquivo ? `: ${m.arquivo}` : ''}]${m.texto ? ` legenda: ${m.texto}` : ''}`;
-    else if (m.tipo === 'documento') { const leg = m.meu ? null : copiaLegivel(m.arquivo, m.texto); t = `[arquivo: ${m.texto || 'documento'}${leg ? `, texto legível (use Read): ${leg}` : ''}]`; }
+    else if (m.tipo === 'documento') { const leg = m.meu ? null : copiaLegivel(m.arquivo, m.texto); const pdf = !m.meu && m.arquivo && /\.pdf$/i.test(m.texto || '') && existsSync(m.arquivo) ? m.arquivo : ''; t = `[arquivo: ${m.texto || 'documento'}${leg ? `, texto legível (use Read): ${leg}` : ''}${pdf ? `, PDF (abra com Read para ver o conteúdo): ${pdf}` : ''}]`; }
     else if (m.tipo === 'figurinha') t = '[figurinha]';
     else if (m.tipo === 'voto') t = `[votou na enquete: "${m.texto}"]`;
     else if (m.tipo === 'enquete') t = `${corpoEnquete(cfg.nome, cfg.empresa, (m.texto || '').replace(/^enquete: /, ''))} [enviada como enquete]`;
@@ -332,13 +332,15 @@ async function talvezAlertar(cfg, c, e) {
   let r = null;
   try { r = await chamarClaude(promptCliente(argsPrompt(cfg, c.chat, e, true))); } catch (err) { log(`ERRO sugestão ${c.chat}: ${err.message}`); }
   if (r?.acao === 'silencio') { log(`sem resposta ${c.chat}, mas não pede resposta`); return; }
-  let sug = String(r?.mensagem_cliente || '').trim().slice(0, 1500);
+  // pagamento, valor, desconto...: quem decide é o dono; o aviso traz a decisão, não um texto para o cliente
+  const decidir = r?.acao === 'consultar' && String(r.pergunta_davi || '').trim() ? String(r.pergunta_davi).trim().slice(0, 600) : null;
+  let sug = String((decidir ? r.sugestao_davi : r?.mensagem_cliente) || '').trim().slice(0, 1500);
   if (PROIBIDO.test(sug)) sug = '';
   const ultima = db.prepare('SELECT tipo, texto, transcricao FROM msgs WHERE chat = ? AND meu = 0 ORDER BY ts DESC LIMIT 1').get(c.chat);
   const ultTxt = (ultima?.texto || ultima?.transcricao || `[${ultima?.tipo}]`).slice(0, 300);
   const min = Math.round((agora() - c.ult) / 60);
-  const id = novoCaso(c.chat, c.nome, 'sugestao', r?.resumo, `cliente sem resposta há ${min} min`, sug || null);
-  avisarDavi(cfg, cartao({ id, icone: '⏰', titulo: `sem resposta há ${min} min`, quem: quemE(c.chat, e, c.nome), resumo: `Última msg: "${ultTxt}"`, sugestao: sug })
+  const id = novoCaso(c.chat, c.nome, decidir ? 'consultar' : 'sugestao', r?.resumo, decidir || `cliente sem resposta há ${min} min`, sug || null);
+  avisarDavi(cfg, cartao({ id, icone: decidir ? '📋' : '⏰', titulo: decidir ? `decisão sua · ${r.categoria || 'atendimento'}` : `sem resposta há ${min} min`, quem: quemE(c.chat, e, c.nome), resumo: decidir ? (r.resumo_davi || r.resumo || `Última msg: "${ultTxt}"`) : `Última msg: "${ultTxt}"`, decidir, sugestao: sug })
     + '\n\nOu responda você mesmo na conversa.');
   log(`alerta sem resposta #${id} ${c.chat}`);
 }
@@ -663,12 +665,26 @@ async function gateContinuidade(cfg, c, e, assume) {
     log(`${c.chat}: continuidade → cliente prefere aguardar a equipe`);
     return 'espera';
   }
+  if (e.cont_estado === 'sugerindo') {
+    // a equipe voltou a falar (ou o painel mandou o Dante assumir): acabou o modo "só sugere"
+    if (equipeTs > e.cont_ts || assume > e.cont_ts) { sair({ cont_estado: null, cont_decidido_ts: Math.max(equipeTs, e.cont_decidido_ts || 0) }); return assume > e.cont_ts ? 'segue' : 'espera'; }
+    await talvezAlertar(cfg, c, e);
+    return 'espera';
+  }
   if (cfg.continuidade === false || !precisaChecar({ equipeTs, agora: agora(), humanoHoras: cfg.humanoHoras, dias: cfg.continuidadeDias ?? CONT_DIAS, assume, decididoTs: e.cont_decidido_ts || 0 })) return 'segue';
   let r;
   try { r = await chamarClaude(promptContinuidade({ nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, c.chat, 25, (cfg.continuidadeDias ?? CONT_DIAS) + 1), agoraTxt: new Date().toLocaleString('pt-BR') }), 120_000, { turnos: 2 }); }
   catch (err) { log(`ERRO continuidade ${c.chat}: ${err.message}`); falhou(cfg, err.message); return 'espera'; }
   log(`continuidade ${c.chat}: ${r.relacao} | ${r.motivo || ''}`);
-  if (r.relacao === 'novo') { sair({ cont_decidido_ts: equipeTs }); return 'segue'; }
+  const rota = rotaContinuidade({ relacao: r.relacao, idadeSeg: agora() - equipeTs, recenteDias: cfg.continuidadeRecenteDias ?? 3 });
+  if (rota === 'segue') { sair({ cont_decidido_ts: equipeTs }); return 'segue'; }
+  if (rota === 'silencio') { sair({ ultimo_ts: c.ult }); log(`${c.chat}: cliente só se despediu, sem resposta`); return 'espera'; }
+  if (rota === 'sugerir') {
+    // a equipe falou há pouco: não puxa conversa com o cliente; o dono recebe a sugestão ou a decisão a tomar
+    sair({ cont_estado: 'sugerindo', cont_ts: agora() });
+    await talvezAlertar(cfg, c, e);
+    return 'espera';
+  }
   enfileirarEnquete(cfg, c.chat, c.nome, textoEnqueteContinuidade(r.assunto, r.pessoal !== false), OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
   sair({ cont_estado: 'aguardando', cont_ts: agora(), cont_briefing: String(r.briefing || '').slice(0, 600), cont_assunto: String(r.assunto || '').slice(0, 80) });
   return 'espera';
@@ -1069,6 +1085,9 @@ async function ciclo() {
       // a última mensagem da conversa já é uma resposta da equipe: nada a fazer
       const assume = assumeTs(db, c.chat); // painel: "Dante assume de volta" ignora a equipe até esse instante
       const ultima = db.prepare('SELECT meu, texto, ts FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(c.chat);
+      // o agente (ou uma sugestão aprovada pelo dono) já respondeu depois da última mensagem do cliente: nada a fazer
+      // (sem isto, ao fim da janela da equipe a mensagem antiga era tratada como nova)
+      if (jaRespondido(ultima, c.ult, (x) => ehDoAgente(cfg, x))) { db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat); continue; }
       if (ultima?.meu && ultima.ts > assume && ehHumano(cfg, ultima.texto, aus)) { db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat); continue; }
       // a equipe escreveu nessa conversa nas últimas horas? então ela está atendendo: o agente não responde
       // sozinho, só avisa o Davi (com sugestão) se o cliente ficar muito tempo sem resposta

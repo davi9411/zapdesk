@@ -110,3 +110,13 @@ por quê e onde. Mais recente primeiro. Este arquivo não entra no prompt do age
   "casos que deram certo e errado" quando o cliente já mandou vídeo/áudio/texto; sugere uma opção pronta se o cliente
   estiver confuso. Em pedido de robô/estratégia nova pergunta só o técnico (stop loss, TP, break even, ativo e tempo
   gráfico) e encaminha — `estilo.md`, `atendimento.md`, `tecnico.md`.
+
+## 03/11/2026
+- **Correção: o agente perguntava "pré-atendimento" para casos já encerrados** (três casos reais de clientes). Causa:
+  a janela de 12 h da equipe terminou de madrugada e as mensagens antigas (já respondidas por sugestão aprovada pelo dono) foram
+  tratadas como novas; a checagem de continuidade então mandou a enquete. Agora: (1) se o agente já respondeu depois da última
+  mensagem do cliente, nada é reprocessado; (2) cliente que só agradece ou se despede ("vou testar", "obrigado") = silêncio;
+  (3) a equipe falou há menos de 3 dias e o cliente continua o assunto = o agente NÃO fala com o cliente e manda ao dono uma sugestão
+  ou a decisão a tomar; (4) a enquete só sai para assunto antigo (3 a 7 dias) ou em dúvida; (5) pagamento, valor a mais, desconto
+  e reembolso viram uma pergunta ao dono ("o cliente pagou e mandou valor a mais, como tratamos?"), nunca um texto ao cliente;
+  comprovantes em PDF são abertos para conferir o valor — `continuidade.mjs`, `agente.mjs`, `prompts.mjs`.

@@ -113,7 +113,12 @@ ${persona('tecnico', v)}
 ${persona('estilo', v)}
 ${sugestao ? `- ATENÇÃO: a EQUIPE já está conversando com este cliente e ele ficou sem resposta. Sua mensagem é só uma
   SUGESTÃO que a equipe vai revisar antes de enviar: não se apresente, continue a conversa de onde parou, no
-  mesmo tom. Se a última mensagem do cliente não pede resposta, use "silencio".`
+  mesmo tom. Se a última mensagem do cliente não pede resposta, use "silencio". Se o cliente só agradece, confirma ou se despede
+  (obrigado, vou testar, tudo certo), use "silencio". Se a mensagem envolve pagamento (comprovante, valor pago a mais ou a menos),
+  preço, desconto, reembolso ou outra decisão que só o dono toma, NÃO escreva texto para o cliente: use acao="consultar",
+  mensagem_cliente vazia e, em pergunta_davi, a decisão em 1 ou 2 frases (o que o cliente fez, a dúvida e as opções; ex.: "O cliente
+  pagou e diz ter mandado um valor a mais. Como tratamos: devolver a diferença, abater de um próximo serviço ou aceitar?"),
+  com a sua proposta em sugestao_davi. Comprovantes em PDF: abra com Read e confira o valor.`
     : primeiroContato ? intro : '- Você já se apresentou nesta conversa: não se apresente de novo.'}
 ${sugestao ? '' : esperaMin >= 15 ? `- O cliente está esperando há cerca de ${esperaMin >= 120 ? `${Math.round(esperaMin / 60)} horas` : `${esperaMin} minutos`}: comece pedindo desculpas pela demora, de forma breve, e responda TUDO o que ele mandou desde a sua última resposta.` : `- O cliente esperou só ${esperaMin} min: NÃO peça desculpas pela demora nem diga que demorou (não houve demora). Responda direto.`}
 ${perfil || estilo ? `- PERFIL DO CLIENTE (observado em atendimentos anteriores; adapte a escrita a ele):${perfil === 'iniciante' ? ' pouca\n  experiência técnica: frases bem simples, um passo de cada vez, diga exatamente onde clicar, sem termos técnicos.' : perfil === 'experiente' ? ' experiente:\n  pode ser mais direto e técnico.' : ''}${estilo ? ` Estilo: ${estilo}` : ''}` : ''}
