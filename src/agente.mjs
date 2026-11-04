@@ -59,6 +59,9 @@ function proximoCiclo() {
 }
 
 const log = (...a) => { const l = `[${new Date().toLocaleString('pt-BR')}] ${a.join(' ')}\n`; try { appendFileSync(ARQ_LOG, l); } catch {} };
+// se o agente cair, o motivo fica no log (antes sumia: o processo rodava escondido, sem saída)
+process.on('uncaughtException', (e) => { log(`FALHA FATAL: ${e?.stack || e}`); process.exit(1); });
+process.on('unhandledRejection', (e) => { log(`FALHA (promessa sem tratamento): ${e?.stack || e}`); });
 
 // ---------- instância única ----------
 function outroVivo() {
@@ -266,9 +269,22 @@ async function obterFicha(cfg, chat, nome) {
 // áudio sem transcrição ou vídeo sem transcrição/frames
 const midiaPendente = (chat, desde) => db.prepare("SELECT COUNT(*) n FROM msgs WHERE chat = ? AND ts >= ? AND tipo IN ('audio','video') AND arquivo IS NOT NULL AND (transcricao IS NULL OR (tipo = 'video' AND frames IS NULL))").get(chat, desde).n;
 // devolve quantas mídias continuam sem preparo (0 = tudo pronto)
-function prepararMidia(chat, desde) {
+// chats com transcrição rodando em segundo plano (o ciclo não pode ficar parado esperando o Whisper: todo o atendimento parava junto)
+const preparando = new Set();
+function prepararMidia(chat, desde, { segundoPlano = false } = {}) {
   if (!midiaPendente(chat, desde)) return 0;
   const [py, ...pyArgs] = python();
+  if (segundoPlano) {
+    if (!preparando.has(chat)) {
+      preparando.add(chat);
+      const p = spawn(py, [...pyArgs, join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { windowsHide: true, stdio: 'ignore' });
+      const t = setTimeout(() => p.kill(), 600_000);
+      const fim = (txt) => { clearTimeout(t); if (preparando.delete(chat)) log(`preparar ${chat}: ${txt} (segundo plano)`); };
+      p.on('error', (err) => fim(`erro ${err.message}`));
+      p.on('close', (cod) => fim(`código ${cod}`));
+    }
+    return midiaPendente(chat, desde);
+  }
   // com o PC ocupado (testes, outras tarefas) a transcrição passou de 5 min e foi cortada: agora tem 10 min
   const r = spawnSync(py, [...pyArgs, join(AQUI, '..', 'tools', 'preparar.py'), '--db', PATHS.db, '--chat', chat, '--desde', String(desde)], { timeout: 600_000, windowsHide: true, encoding: 'utf8' });
   log(`preparar ${chat}: ${r.status} ${(r.stdout || '').trim().split('\n').pop()}`);
@@ -294,7 +310,7 @@ function perfilDo(cfg, chat, e) {
 // janela 0: conversa recente (padrão 15 mensagens dos últimos 3 dias); janela 1: ampliada, só se o agente não entendeu
 const janelaHistorico = (cfg, janela) => (janela ? { msgs: 40, dias: 10 } : { msgs: cfg.historicoMsgs ?? 15, dias: cfg.historicoDias ?? 3 });
 function argsPrompt(cfg, chat, e, sugestao = false, janela = 0) {
-  const midiaPendente = prepararMidia(chat, Math.floor(cfg.ini / 1000) - 3600);
+  const midiaPendente = prepararMidia(chat, Math.floor(cfg.ini / 1000) - 3600, { segundoPlano: true });
   const abertos = db.prepare("SELECT id, resumo, pergunta FROM agente_caso WHERE chat = ? AND status = 'aberto'").all(chat);
   // cliente novo = o agente nunca atendeu essa conversa e a equipe não falou com ela nos últimos 3 dias
   // (histórico antigo, até pessoal, não impede; o modelo vê a conversa e não repete perguntas já respondidas)
@@ -477,6 +493,7 @@ async function atender(cfg, chat, nome, ateTs, e) {
   const args = argsPrompt(cfg, chat, e);
   // vídeo/áudio ainda sem transcrição ou frames: tenta de novo no próximo ciclo (até 3 vezes) em vez de responder "sem ver"
   if (args.midiaPendente) {
+    if (preparando.has(chat)) { log(`${chat}: transcrição em andamento; espero`); return; } // ainda trabalhando: não gasta tentativa
     const n = Number(kv.get(`prep:${chat}`) || 0) + 1;
     kv.set(`prep:${chat}`, n);
     if (n < 3) { log(`${chat}: mídia ainda sem preparo (tentativa ${n}); espero o próximo ciclo`); return; }

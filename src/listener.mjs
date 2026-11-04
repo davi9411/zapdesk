@@ -2,7 +2,7 @@
 // Só envia o que estiver na fila "outbox", que é preenchida exclusivamente por "wa enviar" (comando explícito do usuário).
 import makeWASocket, * as B from '@whiskeysockets/baileys';
 import pino from 'pino';
-import { writeFileSync, mkdirSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
@@ -12,6 +12,7 @@ import { avaliarItem, planoEnvio } from './canais/fila.mjs';
 import { decifrarVoto, opcoesVotadas } from './conector/enquete.mjs';
 import { processoVivo } from './sistema.mjs';
 import { limparMidia } from './regras/limpeza.mjs';
+import { avaliarVigia, novoEstadoVigia, textoVigia } from './regras/vigia.mjs';
 import { lerConfigStatus, verificarStatusDoDia, audienciaDoBanco, AUDIENCIA_PADRAO } from './canais/status.mjs';
 
 const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, fetchLatestBaileysVersion, Browsers, jidNormalizedUser } = B;
@@ -168,6 +169,29 @@ async function rodarAcoes() {
   }
 }
 setInterval(() => processarAcoes().catch((e) => log('erro nas ações', e.message)), 5000);
+
+// ---------- vigia do agente (Dante) ----------
+// O agente regrava agente.pid a cada ciclo. Se o sinal de vida para (agente caído ou travado), o dono recebe aviso no WhatsApp,
+// e outro quando ele volta. O leitor é um processo separado, por isso consegue avisar mesmo com o agente fora do ar.
+const vigiaEstado = novoEstadoVigia();
+let vigiaUltimoTick = Date.now();
+let vigiaCarencia = Date.now() + 6 * 60_000; // logo após ligar (ou acordar o PC) o agente ainda não teve tempo de dar sinal
+async function vigiarAgente() {
+  const agora = Date.now();
+  if (agora - vigiaUltimoTick > 3 * 60_000) vigiaCarencia = agora + 6 * 60_000; // PC dormiu: nada vale até todo mundo reacordar
+  vigiaUltimoTick = agora;
+  if (!conectado || agora < vigiaCarencia) return;
+  let cfg;
+  try { cfg = JSON.parse(readFileSync(join(PATHS.data, 'agente.json'), 'utf8')); } catch { return; }
+  if (!cfg?.ativo || !/^\d{10,15}$/.test(String(cfg.davi || ''))) return;
+  let batida = 0;
+  try { batida = statSync(join(PATHS.data, 'agente.pid')).mtimeMs; } catch { return; }
+  const r = avaliarVigia(vigiaEstado, { agoraMs: agora, batidaMs: batida });
+  if (!r) return;
+  await sock.sendMessage(`${cfg.davi}@s.whatsapp.net`, { text: textoVigia(cfg.nome || 'O agente', r) });
+  log(`vigia do agente: ${r.acao} (${r.min} min)`);
+}
+setInterval(() => vigiarAgente().catch((e) => log('erro na vigia do agente', e.message)), 60_000);
 
 async function salvar(msg, { baixar }) {
   const key = msg.key;
