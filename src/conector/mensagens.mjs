@@ -35,6 +35,14 @@ export function statusCitado(m) {
 }
 export const respondeStatus = (m) => statusCitado(m) !== null;
 
+// texto da mensagem que esta responde ("responder em cima" no WhatsApp), ou null (não confunde com status: serve para qualquer citação)
+export function citadoTexto(m) {
+  const ci = Object.values(m || {}).find((v) => v && typeof v === 'object' && v.contextInfo?.quotedMessage)?.contextInfo;
+  if (!ci) return null;
+  const q = classificar(ci.quotedMessage);
+  return q?.texto ? String(q.texto).slice(0, 1500) : null;
+}
+
 // Prefere o número (@s.whatsapp.net) ao LID quando o protocolo informa os dois.
 export function jidChat(key) {
   const a = key?.remoteJid || '';

@@ -36,6 +36,7 @@ import { aberto, textoRetorno } from './regras/horario.mjs';
 import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
+import { comCitacao } from './agente/citacao.mjs';
 import { gerarLembretes, lerLembretes, promptContas, aplicarAcoes, textoConfirmacao, textoLista } from './regras/lembretes.mjs';
 import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi, copiaLegivel } from './agente/higiene.mjs';
 import { CONT_DIAS, CONT_ESPERA_MIN, jaRespondido, rotaContinuidade, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
@@ -1085,6 +1086,7 @@ async function ciclo() {
         m.texto = comandoFalado(m.transcricao);
         avisarDavi(cfg, `🎙️ Entendi: "${m.texto}"`);
       }
+      m.texto = comCitacao(m.texto, m.citado_msg); // respondeu em cima de um cartão: o número do caso vem da mensagem citada
       await tratarDavi(cfg, m);
     }
     fecharAssumidos(cfg);

@@ -73,6 +73,8 @@ export function abrirDb() {
   // mensagem que é resposta/reação a um status nosso (não é um atendimento)
   try { db.exec('ALTER TABLE msgs ADD COLUMN status_resp INTEGER DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE msgs ADD COLUMN status_texto TEXT'); } catch {}
+  // texto da mensagem que esta respondeu (o dono responde em cima do aviso do agente em vez de digitar o #número)
+  try { db.exec('ALTER TABLE msgs ADD COLUMN citado_msg TEXT'); } catch {}
   // enquete anexada a um envio (JSON {nome, opcoes}) e enquetes enviadas, com o segredo para decifrar os votos
   try { db.exec('ALTER TABLE outbox ADD COLUMN enquete TEXT'); } catch {}
   // tolerância de atraso do próprio envio programado, em minutos (vazio = a padrão do leitor)

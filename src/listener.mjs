@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PATHS, MAX_MIDIA_MB, garantirPastas, pidDeOutroBoot } from './config.mjs';
 import { abrirDb, normEtiqueta } from './armazenamento/db.mjs';
 import { lerAusencia, deveResponder, criarRegistro } from './regras/ausencia.mjs';
-import { classificar, jidChat, extensao, statusCitado } from './conector/mensagens.mjs';
+import { classificar, jidChat, extensao, statusCitado, citadoTexto } from './conector/mensagens.mjs';
 import { avaliarItem, planoEnvio } from './canais/fila.mjs';
 import { decifrarVoto, opcoesVotadas } from './conector/enquete.mjs';
 import { processoVivo } from './sistema.mjs';
@@ -227,6 +227,8 @@ async function salvar(msg, { baixar }) {
   const citado = statusCitado(conteudo);
   const status = citado !== null ? 1 : 0;
   insMsg.run(jid, key.id, ts, key.fromMe ? 1 : 0, de, c.tipo, c.texto ?? null, arquivo, mime, c.dur ? num(c.dur) : null, status, citado);
+  const resp = key.fromMe ? null : citadoTexto(conteudo);
+  if (resp) db.prepare('UPDATE msgs SET citado_msg = ? WHERE chat = ? AND id = ?').run(resp, jid, key.id);
   return { jid, grupo, ts, meu: !!key.fromMe, nome: nome || msg.pushName || null, status };
 }
 
