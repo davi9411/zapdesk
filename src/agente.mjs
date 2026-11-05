@@ -37,6 +37,7 @@ import { comandoFalado } from './agente/voz.mjs';
 import { criarTabelasControle, assumeTs, silenciada, assumirDeVolta } from './agente/controle.mjs';
 import { gerarRotinas } from './regras/rotinas.mjs';
 import { comCitacao } from './agente/citacao.mjs';
+import { propostaConfirmada } from './agente/confirmacao.mjs';
 import { gerarLembretes, lerLembretes, promptContas, aplicarAcoes, textoConfirmacao, textoLista } from './regras/lembretes.mjs';
 import { tirarDesculpaDemora, admiteNaoVer, promptSemNaoVi, copiaLegivel } from './agente/higiene.mjs';
 import { CONT_DIAS, CONT_ESPERA_MIN, jaRespondido, rotaContinuidade, precisaChecar, promptContinuidade, textoEnqueteContinuidade, votoContinuidade, briefingSemVoto } from './agente/continuidade.mjs';
@@ -351,6 +352,7 @@ async function talvezAlertar(cfg, c, e) {
   // marca DEPOIS da consulta ao modelo: se o agente for reiniciado no meio, o aviso não se perde (tenta de novo no próximo ciclo)
   db.prepare('UPDATE agente_chat SET alertado_ts = ? WHERE chat = ?').run(c.ult, c.chat);
   if (r?.acao === 'silencio') { log(`sem resposta ${c.chat}, mas não pede resposta`); return; }
+  if (r?.acao === 'informar') { informarConfirmacao(cfg, c.chat, c.nome, e, r); return; }
   // pagamento, valor, desconto...: quem decide é o dono; o aviso traz a decisão, não um texto para o cliente
   const decidir = r?.acao === 'consultar' && String(r.pergunta_davi || '').trim() ? String(r.pergunta_davi).trim().slice(0, 600) : null;
   let sug = String((decidir ? r.sugestao_davi : r?.mensagem_cliente) || '').trim().slice(0, 1500);
@@ -514,6 +516,14 @@ async function atender(cfg, chat, nome, ateTs, e) {
   catch (err) { log(`ERRO claude ${chat}: ${err.message}`); falhou(cfg, err.message); return; } // não marca como lido: tenta de novo no próximo ciclo
   db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(ateTs, chat);
   log(`cliente ${nome || chat}: ${r.acao} | ${r.resumo || ''}`);
+  // o cliente só confirmou uma proposta que a equipe acabou de mandar: não há o que responder nem sugerir (trava, mesmo que o modelo erre)
+  if (r.acao !== 'silencio' && r.acao !== 'informar') {
+    const cp = db.prepare("SELECT resposta, fechado FROM agente_caso WHERE chat = ? AND status = 'respondido' AND fechado > ? ORDER BY fechado DESC LIMIT 1").get(chat, agora() - 12 * 3600);
+    if (cp && propostaConfirmada({ propostaTexto: cp.resposta, mensagensCliente: db.prepare('SELECT coalesce(texto, transcricao) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? ORDER BY ts').all(chat, cp.fechado).map((x) => x.t) })) {
+      log(`${chat}: cliente só confirmou a proposta da equipe; viro "informar"`);
+      r.acao = 'informar'; r.mensagem_cliente = '';
+    }
+  }
   if (r.nome_cliente) db.prepare('UPDATE agente_chat SET nome_cliente = ? WHERE chat = ?').run(String(r.nome_cliente).slice(0, 60), chat);
   if (r.origem) db.prepare('UPDATE agente_chat SET origem = ? WHERE chat = ?').run(String(r.origem).slice(0, 80), chat);
   // primeiro contato que diz já ser cliente (ex.: comprou com outro número): procura no Notion pelo nome informado
@@ -546,6 +556,7 @@ async function atender(cfg, chat, nome, ateTs, e) {
     db.prepare('UPDATE agente_chat SET msgs_dia = msgs_dia + 1 WHERE chat = ?').run(chat);
     return;
   }
+  if (r.acao === 'informar') { informarConfirmacao(cfg, chat, nome, e, r); return; }
   if (r.acao === 'silencio') return;
   // sem mensagem ao cliente (ex.: propaganda): só avisa a equipe
   if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') encaminhar(cfg, chat, nome, e, r, r.acao); return; }
@@ -597,6 +608,18 @@ function encaminhar(cfg, chat, nome, e, r, acao) {
   if (acao === 'encaminhar' && r.tecnico && typeof r.tecnico === 'object' && cfg.fluxoTecnico !== false) {
     try { registrarTarefa(cfg, chat, nome, e, r); } catch (err) { log(`tarefa técnica falhou ${chat}: ${err.message}`); }
   }
+}
+
+// cliente confirmou o que a equipe propôs: só um aviso ao dono (sem sugestão, sem mensagem ao cliente, sem caso aberto)
+function informarConfirmacao(cfg, chat, nome, e, r) {
+  const quem = `${r.nome_cliente || e.nome_cliente || nome || 'cliente'} (${numeroDe(chat)})`;
+  novoCaso(chat, nome, 'informar', r.resumo, '', null);
+  db.prepare("UPDATE agente_caso SET status = 'respondido', fechado = ? WHERE id = (SELECT MAX(id) FROM agente_caso WHERE chat = ?)").run(agora(), chat);
+  avisarDavi(cfg, `✅ *${quem}* confirmou o combinado.
+${r.resumo_davi || r.resumo || ''}
+
+Não mandei nada ao cliente e não há nada a responder.`);
+  log(`confirmação de ${chat}: avisei o dono, sem mensagem ao cliente`);
 }
 
 // abre (ou atualiza) o caso e manda o cartão ao Davi
