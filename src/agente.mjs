@@ -366,6 +366,33 @@ async function talvezAlertar(cfg, c, e) {
   log(`alerta sem resposta #${id} ${c.chat}`);
 }
 
+// consulta aberta com o dono (aguardando a decisão dele): o agente não fala com o cliente por cima (até 6 h)
+function casoSegurando(cfg, chat) {
+  return db.prepare("SELECT id, criado FROM agente_caso WHERE chat = ? AND status = 'aberto' AND tipo = 'consultar' AND criado > ? ORDER BY id DESC LIMIT 1")
+    .get(chat, agora() - (cfg.segurarCasoH ?? 6) * 3600) || null;
+}
+// o cliente escreveu de novo enquanto o dono decide: só avisa o dono (resumo curto), sem responder o cliente
+function segurarPorCaso(cfg, c, caso) {
+  const novas = db.prepare('SELECT coalesce(texto, transcricao, \'[\' || tipo || \']\') t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? ORDER BY ts').all(c.chat, estadoChat(c.chat).ultimo_ts || 0)
+    .map((m) => String(m.t || '').replace(/\s+/g, ' ').slice(0, 300));
+  db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(c.ult, c.chat);
+  if (!novas.length) return;
+  avisarDavi(cfg, `💬 *${c.nome || numeroDe(c.chat)}* escreveu de novo enquanto espera sua decisão no caso #${caso.id}:\n${novas.map((t) => `"${t}"`).join('\n')}\n\nNão respondi ao cliente. Responda o caso (#${caso.id} ...) que eu sigo.`);
+  log(`${c.chat}: cliente escreveu com consulta #${caso.id} aberta; só avisei o dono`);
+}
+// consulta aberta e o cliente esperando há um tempo: um único "analisando" (no máximo 1 por hora)
+function avisosDeEspera(cfg) {
+  const minimo = (cfg.esperaCasoMin ?? 10) * 60;
+  for (const k of db.prepare("SELECT chat, nome FROM agente_caso WHERE status = 'aberto' AND tipo = 'consultar' AND criado > ?").all(agora() - (cfg.segurarCasoH ?? 6) * 3600)) {
+    const ult = db.prepare('SELECT meu, ts FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(k.chat);
+    const e = estadoChat(k.chat);
+    if (!ult || ult.meu || agora() - ult.ts < minimo || agora() - (e.momento_ts || 0) < 3600) continue;
+    db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), k.chat);
+    enfileirar(k.chat, k.nome, paraCliente(cfg, 'Só um momento, estou analisando isso para você.'));
+    log(`${k.chat}: aviso de espera (consulta aberta)`);
+  }
+}
+
 // casos parados: lembra uma vez
 function lembrarCasos(cfg) {
   if (!dentroAlerta(cfg)) return;
@@ -483,12 +510,13 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   }
   // conhece o cliente (Notion + repositório) antes de responder, mas só se ele já parece cliente
   // resposta demorando (ficha, leitura dos arquivos do robô): avisa uma vez que está verificando (no máximo 1 a cada 15 min)
+  // só depois de uma espera real (padrão 3 min), no máximo 1 por hora e nunca com consulta aberta com o dono
   const momento = e.apresentado ? setTimeout(() => {
-    if (agora() - (estadoChat(chat).momento_ts || 0) < 900) return;
+    if (agora() - (estadoChat(chat).momento_ts || 0) < 3600 || casoSegurando(cfg, chat)) return;
     db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), chat);
-    enfileirar(chat, nome, paraCliente(cfg, 'Só um momento, estou verificando isso para você.'));
+    enfileirar(chat, nome, paraCliente(cfg, 'Só um momento, estou analisando isso para você.'));
     log(`${chat}: aviso de "um momento"`);
-  }, cfg.momentoS ? cfg.momentoS * 1000 : 25_000) : null;
+  }, cfg.momentoS ? cfg.momentoS * 1000 : 180_000) : null;
   try { await atender(cfg, chat, nome, ateTs, e); } finally { clearTimeout(momento); }
 }
 async function atender(cfg, chat, nome, ateTs, e) {
@@ -716,7 +744,7 @@ async function gateContinuidade(cfg, c, e, assume) {
   }
   if (cfg.continuidade === false || !precisaChecar({ equipeTs, agora: agora(), humanoHoras: cfg.humanoHoras, dias: cfg.continuidadeDias ?? CONT_DIAS, assume, decididoTs: e.cont_decidido_ts || 0 })) return 'segue';
   let r;
-  try { r = await chamarClaude(promptContinuidade({ nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, c.chat, 25, (cfg.continuidadeDias ?? CONT_DIAS) + 1), agoraTxt: new Date().toLocaleString('pt-BR') }), 120_000, { turnos: 2 }); }
+  try { r = await chamarClaude(promptContinuidade({ nome: cfg.nome, empresa: cfg.empresa, conversa: textoConversa(cfg, c.chat, 25, (cfg.continuidadeDias ?? CONT_DIAS) + 1), agoraTxt: new Date().toLocaleString('pt-BR') }), 300_000, { turnos: 2 }); }
   catch (err) { log(`ERRO continuidade ${c.chat}: ${err.message}`); falhou(cfg, err.message); return 'espera'; }
   log(`continuidade ${c.chat}: ${r.relacao} | ${r.motivo || ''}`);
   const rota = rotaContinuidade({ relacao: r.relacao, idadeSeg: agora() - equipeTs, recenteDias: cfg.continuidadeRecenteDias ?? 3 });
@@ -1115,6 +1143,7 @@ async function ciclo() {
     fecharAssumidos(cfg);
     if (kv.get('pausado') === '1' || Date.now() < esperarAte) return;
     lembrarCasos(cfg);
+    avisosDeEspera(cfg);
     avaliacoesPendentes(cfg);
     continuidadeTimeouts(cfg);
     perguntasSemResposta(cfg);
@@ -1184,6 +1213,9 @@ async function ciclo() {
         continue;
       }
       if (e.humano) db.prepare('UPDATE agente_chat SET humano = 0 WHERE chat = ?').run(c.chat);
+      // consulta aberta com o dono: não atropela, só avisa que o cliente escreveu de novo
+      const segura = casoSegurando(cfg, c.chat);
+      if (segura) { segurarPorCaso(cfg, c, segura); continue; }
       // a equipe falou por último há mais tempo: confere se é o mesmo assunto antes de entrar
       if (await gateContinuidade(cfg, c, estadoChat(c.chat), assume) === 'espera') continue;
       await atenderCliente(cfg, c.chat, c.nome, c.ult);
