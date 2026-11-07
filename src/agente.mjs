@@ -366,6 +366,7 @@ async function talvezAlertar(cfg, c, e) {
   log(`alerta sem resposta #${id} ${c.chat}`);
 }
 
+const FECHAMENTO = /^(ok(ay)?|blz|beleza|perfeito|combinado|certo|valeu|obrigad[oa]s?|show|top|tudo bem|tranquilo|fechado|pode ser|entendi|👍|🙏|😊)[\s!.👍🙏😊]*$/i;
 // consulta aberta com o dono (aguardando a decisão dele): o agente não fala com o cliente por cima (até 6 h)
 function casoSegurando(cfg, chat) {
   return db.prepare("SELECT id, criado FROM agente_caso WHERE chat = ? AND status = 'aberto' AND tipo = 'consultar' AND criado > ? ORDER BY id DESC LIMIT 1")
@@ -383,10 +384,13 @@ function segurarPorCaso(cfg, c, caso) {
 // consulta aberta e o cliente esperando há um tempo: um único "analisando" (no máximo 1 por hora)
 function avisosDeEspera(cfg) {
   const minimo = (cfg.esperaCasoMin ?? 10) * 60;
-  for (const k of db.prepare("SELECT chat, nome FROM agente_caso WHERE status = 'aberto' AND tipo = 'consultar' AND criado > ?").all(agora() - (cfg.segurarCasoH ?? 6) * 3600)) {
-    const ult = db.prepare('SELECT meu, ts FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(k.chat);
+  for (const k of db.prepare("SELECT chat, nome, criado FROM agente_caso WHERE status = 'aberto' AND tipo = 'consultar' AND criado > ?").all(agora() - (cfg.segurarCasoH ?? 6) * 3600)) {
+    const ult = db.prepare('SELECT meu, ts, coalesce(texto, transcricao) t, tipo FROM msgs WHERE chat = ? ORDER BY ts DESC LIMIT 1').get(k.chat);
     const e = estadoChat(k.chat);
     if (!ult || ult.meu || agora() - ult.ts < minimo || agora() - (e.momento_ts || 0) < 3600) continue;
+    // só se a mensagem do cliente chegou DEPOIS de abrir a consulta, é recente, pede resposta e o dono não mandou o agente calar
+    if (ult.ts <= k.criado || agora() - ult.ts > 3 * 3600 || FECHAMENTO.test(String(ult.t || "").trim()) || ['figurinha', 'voto'].includes(ult.tipo)) continue;
+    if (/N[ÃA]O envie/i.test(kv.get(`nota:${k.chat}`) || '')) continue;
     db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), k.chat);
     enfileirar(k.chat, k.nome, paraCliente(cfg, 'Só um momento, estou analisando isso para você.'));
     log(`${k.chat}: aviso de espera (consulta aberta)`);
