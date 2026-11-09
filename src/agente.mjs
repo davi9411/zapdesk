@@ -516,14 +516,30 @@ async function atenderCliente(cfg, chat, nome, ateTs) {
   // resposta demorando (ficha, leitura dos arquivos do robô): avisa uma vez que está verificando (no máximo 1 a cada 15 min)
   // só depois de uma espera real (padrão 3 min), no máximo 1 por hora e nunca com consulta aberta com o dono
   const momento = e.apresentado ? setTimeout(() => {
-    if (agora() - (estadoChat(chat).momento_ts || 0) < 3600 || casoSegurando(cfg, chat)) return;
+    if (agora() - (estadoChat(chat).momento_ts || 0) < 3600 || casoSegurando(cfg, chat) || preparando.has(chat)) return; // transcrevendo áudio: a demora é nossa, não "analisando"
     db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), chat);
     enfileirar(chat, nome, paraCliente(cfg, 'Só um momento, estou analisando isso para você.'));
     log(`${chat}: aviso de "um momento"`);
   }, cfg.momentoS ? cfg.momentoS * 1000 : 180_000) : null;
   try { await atender(cfg, chat, nome, ateTs, e); } finally { clearTimeout(momento); }
 }
+// cliente que diz não querer falar com IA / quer uma pessoa: o agente não responde; pergunta ao dono (com a enquete humano/IA como sugestão)
+const PEDE_HUMANO = /(n[ãa]o\s+(quero|preciso|gosto)[^.!?\n]{0,25}(?<![\wà-ú])(ia|i\.a\.?|rob[ôo]|bot|intelig[êe]ncia)(?![\wà-ú])|nem\s+vem\s+com\s+(a\s+|essa\s+)?(ia|bot|rob[ôo])(?![\wà-ú])|\bsem\s+(a\s+)?ia\b|(quero|prefiro|preciso)[^.!?\n]{0,25}(humano|pessoa|atendente|algu[ée]m de verdade|gente de verdade)|falar\s+com\s+(um\s+|uma\s+)?(humano|pessoa|atendente))/i;
+function pedidoDeHumano(cfg, chat, nome, e, ateTs) {
+  if (e.escolha === 'humano' || casoSegurando(cfg, chat)) return false;
+  const fala = db.prepare("SELECT coalesce(texto, transcricao) t FROM msgs WHERE chat = ? AND meu = 0 AND ts > ? AND tipo IN ('texto', 'audio')").all(chat, e.ultimo_ts || 0)
+    .map((m) => String(m.t || '').replace(/\s+/g, ' ').trim()).find((t) => PEDE_HUMANO.test(t));
+  if (!fala) return false;
+  const sug = 'Mandar a enquete "Como prefere seguir?" (1 - pré-atendimento do Dante / 2 - aguardar a equipe)';
+  const id = novoCaso(chat, nome, 'consultar', `Cliente não quer falar com IA: "${fala.slice(0, 200)}"`, 'Quer que eu mande a enquete humano/IA, ou prefere responder você?', sug);
+  kv.set(`enquete_caso:${id}`, 1);
+  db.prepare('UPDATE agente_chat SET ultimo_ts = ? WHERE chat = ?').run(ateTs, chat);
+  avisarDavi(cfg, cartao({ id, icone: '🙋', titulo: 'não quer falar com IA', quem: quemE(chat, e, nome), resumo: `Disse: "${fala.slice(0, 300)}"`, decidir: 'Quer que eu pergunte se ele segue com a IA ou aguarda a equipe, ou prefere responder você?', sugestao: sug }));
+  log(`${chat}: cliente pede humano; caso #${id} aberto, nada enviado ao cliente`);
+  return true;
+}
 async function atender(cfg, chat, nome, ateTs, e) {
+  if (pedidoDeHumano(cfg, chat, nome, e, ateTs)) return;
   if (!fichaTeste(cfg, chat) && deveConsultarFicha(chat, e)) await obterFicha(cfg, chat, e.nome_cliente || nome);
   const args = argsPrompt(cfg, chat, e);
   // vídeo/áudio ainda sem transcrição ou frames: tenta de novo no próximo ciclo (até 3 vezes) em vez de responder "sem ver"
@@ -591,7 +607,14 @@ async function atender(cfg, chat, nome, ateTs, e) {
   if (r.acao === 'informar') { informarConfirmacao(cfg, chat, nome, e, r); return; }
   if (r.acao === 'silencio') return;
   // sem mensagem ao cliente (ex.: propaganda): só avisa a equipe
-  if (!r.mensagem_cliente) { if (r.acao === 'encaminhar' || r.acao === 'consultar') encaminhar(cfg, chat, nome, e, r, r.acao); return; }
+  if (!r.mensagem_cliente) {
+    if (r.acao === 'encaminhar' || r.acao === 'consultar') {
+      // cliente novo e o assunto vai primeiro para o dono: na dúvida, a enquete da escolha fica por conta dele (opção no cartão)
+      if (args.primeiroContato && !args.escolhaFeita && !r.escolha && !propaganda && cfg.enqueteEscolha !== false) r.oferecerEnquete = true;
+      encaminhar(cfg, chat, nome, e, r, r.acao);
+    }
+    return;
+  }
   let texto = await limitarTamanho(cfg, chat, String(r.mensagem_cliente).trim().slice(0, 1500));
   // desculpa pela demora só se o cliente esperou 15 min ou mais; e nunca "não consegui ver o vídeo/áudio"
   if (args.esperaMin < 15) {
@@ -615,6 +638,7 @@ async function atender(cfg, chat, nome, ateTs, e) {
   }
   // primeiro contato oferecendo a escolha: a mensagem vira a pergunta da enquete (1/2), numa mensagem só
   const comEnquete = args.primeiroContato && !args.escolhaFeita && !r.escolha && acao === 'responder' && cfg.enqueteEscolha !== false;
+  if (args.primeiroContato && !args.escolhaFeita && !r.escolha && !propaganda && cfg.enqueteEscolha !== false && (acao === 'encaminhar' || acao === 'consultar')) r.oferecerEnquete = true;
   // cliente novo que escolheu aguardar a equipe: a confirmação vai junto com a enquete de origem
   const comOrigem = r.escolha === 'humano' && !e.escolha && acao === 'encaminhar' && precisaOrigem(cfg, chat, estadoChat(chat));
   if (comEnquete) enfileirarEnquete(cfg, chat, nome, texto, OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
@@ -666,6 +690,7 @@ function avisarCaso(cfg, chat, nome, e, r, acao) {
   avisarDavi(cfg, cartao({ id, icone: aberto ? '🔄' : enc ? '📨' : '📋', titulo: `${aberto ? 'atualização · ' : ''}${r.categoria || 'atendimento'}`, quem,
     origem: aberto ? null : r.origem || e.origem, resumo: r.resumo_davi || r.resumo, decidir: enc ? null : r.pergunta_davi, sugestao: sug,
     ficha: aberto ? null : fichaGuardada(chat) })
+    + (r.oferecerEnquete ? `\n\n📊 Cliente novo, ainda sem a enquete "Como prefere seguir?". Não mandei por dúvida.\n*#${id} enquete* → mando a enquete (1 - Dante / 2 - equipe)` : '')
     + (enc ? '\n\nOu siga direto na conversa (eu paro de responder quando você escrever).' : ''));
 }
 
@@ -984,6 +1009,14 @@ async function tratarDavi(cfg, m) {
   if (!caso || !['aberto', 'assumido'].includes(caso.status)) { avisarDavi(cfg, `Caso #${mt[1]} não está aberto.`); return; }
   if (!instrucao) { avisarDavi(cfg, `Faltou a orientação do caso #${caso.id}.`); return; }
 
+  // "#N enquete": manda ao cliente a enquete humano/IA; o caso continua aberto
+  if (/^enquete[.!]?$/i.test(instrucao)) {
+    enfileirarEnquete(cfg, caso.chat, caso.nome, 'Recebi sua mensagem. Como prefere seguir?', OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
+    db.prepare('UPDATE agente_chat SET escolha_pendente = 1, apresentado = 1 WHERE chat = ?').run(caso.chat);
+    avisarDavi(cfg, `📊 Caso #${caso.id}: mandei a enquete humano/IA ao cliente. O caso segue aberto.`);
+    log(`caso #${caso.id}: enquete humano/IA enviada pelo dono`);
+    return;
+  }
   // "#N nada": fecha o caso sem mandar mensagem nenhuma ao cliente
   if (/^(nada|ignorar|ignora|n[aã]o responde(r)?|sem resposta|nenhuma|deixa( quieto)?)[.!]?$/i.test(instrucao)) {
     db.prepare("UPDATE agente_caso SET status = 'descartado', fechado = ? WHERE id = ?").run(agora(), caso.id);
@@ -995,6 +1028,15 @@ async function tratarDavi(cfg, m) {
   const depois = /^(sexta|depois)\.?$/i.test(instrucao);
   const ev = eventoAtivo(cfg);
   if (/^(ok|sim|pode|manda)[.!]?$/i.test(instrucao)) {
+    // caso "cliente não quer IA": o "ok" manda a enquete humano/IA em vez de um texto
+    if (kv.get(`enquete_caso:${caso.id}`)) {
+      enfileirarEnquete(cfg, caso.chat, caso.nome, 'Tudo bem! Como prefere seguir?', OPCOES_ESCOLHA, PERGUNTA_ESCOLHA);
+      db.prepare('UPDATE agente_chat SET escolha_pendente = 1, apresentado = 1 WHERE chat = ?').run(caso.chat);
+      db.prepare("UPDATE agente_caso SET status = 'respondido', fechado = ?, resposta = 'enquete humano/IA' WHERE id = ?").run(agora(), caso.id);
+      avisarDavi(cfg, `✅ Caso #${caso.id}: mandei a enquete humano/IA ao cliente.`);
+      log(`caso #${caso.id}: enquete humano/IA enviada`);
+      return;
+    }
     if (!caso.sugestao) { avisarDavi(cfg, `O caso #${caso.id} não tem sugestão pronta. Mande *#${caso.id} sua orientação*.`); return; }
     texto = caso.sugestao;
   } else if (depois) {
