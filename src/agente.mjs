@@ -984,6 +984,13 @@ async function tratarDavi(cfg, m) {
   if (!caso || !['aberto', 'assumido'].includes(caso.status)) { avisarDavi(cfg, `Caso #${mt[1]} não está aberto.`); return; }
   if (!instrucao) { avisarDavi(cfg, `Faltou a orientação do caso #${caso.id}.`); return; }
 
+  // "#N nada": fecha o caso sem mandar mensagem nenhuma ao cliente
+  if (/^(nada|ignorar|ignora|n[aã]o responde(r)?|sem resposta|nenhuma|deixa( quieto)?)[.!]?$/i.test(instrucao)) {
+    db.prepare("UPDATE agente_caso SET status = 'descartado', fechado = ? WHERE id = ?").run(agora(), caso.id);
+    avisarDavi(cfg, `🤐 Caso #${caso.id} fechado sem mandar nada ao cliente.`);
+    log(`caso #${caso.id} fechado sem resposta (ordem do dono)`);
+    return;
+  }
   let texto;
   const depois = /^(sexta|depois)\.?$/i.test(instrucao);
   const ev = eventoAtivo(cfg);

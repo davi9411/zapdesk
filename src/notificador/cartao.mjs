@@ -4,5 +4,6 @@ export function cartao({ id, icone, titulo, quem, origem, resumo, decidir, suges
   return `${icone} *#${id} · ${quem}*${titulo ? ` — ${titulo}` : ''}\n${resumo || '-'}${origem ? `\n_Conheceu por: ${origem}_` : ''}${f}${decidir ? `\n❓ ${decidir}` : ''}`
     + `${sugestao ? `\n\n💡 *Sugestão:* "${sugestao}"` : ''}\n\n`
     + `${sugestao ? `1️⃣ *#${id} ok* → mando a sugestão\n2️⃣` : '1️⃣'} *#${id} sua orientação* → escrevo a partir do que você disser\n`
-    + `${sugestao ? '3️⃣' : '2️⃣'} *#${id} depois* → aviso que os dados foram coletados e a equipe responde em breve`;
+    + `${sugestao ? '3️⃣' : '2️⃣'} *#${id} depois* → aviso que os dados foram coletados e a equipe responde em breve\n`
+    + `${sugestao ? '4️⃣' : '3️⃣'} *#${id} nada* → fecho o caso sem mandar mensagem ao cliente`;
 }
