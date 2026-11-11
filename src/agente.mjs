@@ -73,10 +73,26 @@ function outroVivo() {
     return processoVivo(pid);
   } catch { return false; }
 }
-if (outroVivo()) { process.exit(0); }
+// trava atômica (criar com "wx" só funciona para um): dois agentes subindo no mesmo segundo respondiam o cliente em dobro
+const ARQ_LOCK = join(PATHS.data, 'agente.lock');
+function tomarTrava() {
+  for (let i = 0; i < 2; i++) {
+    try { writeFileSync(ARQ_LOCK, String(process.pid), { flag: 'wx' }); return true; }
+    catch {
+      try {
+        const p = Number(readFileSync(ARQ_LOCK, 'utf8'));
+        const velha = statSync(ARQ_LOCK).mtimeMs < Date.now() - uptime() * 1000; // sobrou de antes do último boot
+        if (p && p !== process.pid && !velha && processoVivo(p)) return false;
+        unlinkSync(ARQ_LOCK);
+      } catch {}
+    }
+  }
+  return false;
+}
+if (outroVivo() || !tomarTrava()) { process.exit(0); }
 mkdirSync(PASTA_CLAUDE, { recursive: true });
 writeFileSync(ARQ_PID, String(process.pid));
-const sair = () => { try { if (readFileSync(ARQ_PID, 'utf8') === String(process.pid)) unlinkSync(ARQ_PID); } catch {} process.exit(0); };
+const sair = () => { try { if (readFileSync(ARQ_PID, 'utf8') === String(process.pid)) unlinkSync(ARQ_PID); } catch {} try { if (readFileSync(ARQ_LOCK, 'utf8') === String(process.pid)) unlinkSync(ARQ_LOCK); } catch {} process.exit(0); };
 process.on('SIGINT', sair); process.on('SIGTERM', sair);
 
 // ---------- banco ----------
@@ -140,6 +156,8 @@ function enfileirarEnquete(cfg, chat, nome, texto, opcoes, perguntaSeparada) {
   else enfileirar(chat, nome, paraCliente(cfg, texto), { nome: perguntaSeparada, opcoes });
 }
 function enfileirar(chat, nome, texto, enquete = null) {
+  // rede de segurança: nunca duas mensagens idênticas para o mesmo chat em 3 minutos
+  if (texto && db.prepare('SELECT 1 FROM outbox WHERE chat = ? AND texto = ? AND criado > ?').get(chat, texto, agora() - 180)) { log(`${chat}: mensagem repetida descartada`); return; }
   db.prepare('INSERT INTO outbox (chat, nome, texto, arquivos, enviar_em, criado, enquete) VALUES (?, ?, ?, NULL, ?, ?, ?)').run(chat, nome, texto, agora(), agora(), enquete && JSON.stringify(enquete));
 }
 function avisarDavi(cfg, texto) { enfileirar(cfg.daviJids[0], 'Davi (pessoal)', `🤖 *${cfg.nome} (agente)*\n${texto}`); }
@@ -392,7 +410,9 @@ function avisosDeEspera(cfg) {
     if (ult.ts <= k.criado || agora() - ult.ts > 3 * 3600 || FECHAMENTO.test(String(ult.t || "").trim()) || ['figurinha', 'voto'].includes(ult.tipo)) continue;
     if (/N[ÃA]O envie/i.test(kv.get(`nota:${k.chat}`) || '')) continue;
     db.prepare('UPDATE agente_chat SET momento_ts = ? WHERE chat = ?').run(agora(), k.chat);
-    enfileirar(k.chat, k.nome, paraCliente(cfg, 'Só um momento, estou analisando isso para você.'));
+    const apres = e.apresentado ? '' : `Sou o ${cfg.nome}, agente de IA da ${cfg.empresa}, e ajudo a equipe no pré-atendimento. `;
+    if (!e.apresentado) db.prepare('UPDATE agente_chat SET apresentado = 1 WHERE chat = ?').run(k.chat);
+    enfileirar(k.chat, k.nome, paraCliente(cfg, `${apres}Só um momento, estou analisando isso para você.`));
     log(`${k.chat}: aviso de espera (consulta aberta)`);
   }
 }
@@ -1058,6 +1078,11 @@ async function tratarDavi(cfg, m) {
     }
     texto = String(r.mensagem_cliente || '').trim();
     if (!texto || /(claude|anthropic|openai|chatgpt|\bdavi\b)/i.test(texto)) { avisarDavi(cfg, `Não consegui redigir uma resposta segura para o caso #${caso.id}. Mande a orientação de outro jeito ou *#${caso.id} sexta*.`); return; }
+  }
+  // cliente que o Dante nunca atendeu (cliente antigo): a primeira mensagem dele se apresenta
+  if (!estadoChat(caso.chat).apresentado) {
+    texto = `Sou o ${cfg.nome}, agente de IA da ${cfg.empresa}, e ajudo a equipe no pré-atendimento. ${texto}`;
+    db.prepare('UPDATE agente_chat SET apresentado = 1 WHERE chat = ?').run(caso.chat);
   }
   enfileirar(caso.chat, caso.nome, paraCliente(cfg, texto.slice(0, 1500)));
   db.prepare("UPDATE agente_caso SET status = ?, fechado = ?, resposta = ? WHERE id = ?").run(depois ? 'depois' : 'respondido', agora(), texto, caso.id);
